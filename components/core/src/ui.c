@@ -105,7 +105,7 @@ void ui_handle(ui_t *ui, button_event_t ev)
     case UI_STATUS:
         if (ev == BTN_BOTH_HOLD) {
             ui->screen = UI_MENU;
-            ui->item = UI_ITEM_BREW_TEMP;
+            ui->item = UI_ITEM_PROFILE; /* start at the first menu item */
         }
         break;
 
