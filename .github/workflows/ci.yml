@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  # Native unit tests of the portable core on Linux.
+  host-tests-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Ninja
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+      - name: Configure, build, test
+        working-directory: tests
+        run: |
+          cmake --preset host
+          cmake --build --preset host
+          ctest --preset host --output-on-failure
+
+  # Same, on Windows via MSYS2/UCRT64 (mirrors the documented local setup).
+  host-tests-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            git
+      - name: Configure, build, test
+        working-directory: tests
+        run: |
+          cmake --preset host
+          cmake --build --preset host
+          ctest --preset host --output-on-failure
+
+  # Build the ESP32 firmware with the official ESP-IDF image.
+  firmware:
+    runs-on: ubuntu-latest
+    container: espressif/idf:release-v5.4
+    steps:
+      - uses: actions/checkout@v4
+      - name: idf.py build
+        shell: bash
+        run: |
+          . "$IDF_PATH/export.sh"
+          idf.py set-target esp32
+          idf.py build
+
+  # Formatting check (advisory — run scripts/format to fix).
+  lint:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install clang-format
+        run: sudo apt-get update && sudo apt-get install -y clang-format
+      - name: clang-format --dry-run
+        run: |
+          files=$(git ls-files '*.c' '*.h')
+          clang-format --dry-run --Werror $files

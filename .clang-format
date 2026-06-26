@@ -1,0 +1,17 @@
+# Matches the house style: 4-space indent, Linux-style braces (function braces
+# on their own line, control-statement braces attached), pointers bind right.
+BasedOnStyle: LLVM
+Language: Cpp
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 90
+BreakBeforeBraces: Linux
+PointerAlignment: Right
+SpaceAfterCStyleCast: false
+AllowShortFunctionsOnASingleLine: All
+AllowShortIfStatementsOnASingleLine: false
+AllowShortLoopsOnASingleLine: false
+SortIncludes: true
+IncludeBlocks: Preserve
+AlignAfterOpenBracket: Align

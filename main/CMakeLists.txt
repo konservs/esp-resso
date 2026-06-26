@@ -1,0 +1,20 @@
+idf_component_register(
+    SRCS
+        "app_main.c"
+        "tasks/control_task.c"
+        "tasks/safety_task.c"
+        "tasks/ui_task.c"
+        "tasks/net_task.c"
+    INCLUDE_DIRS
+        "include"
+    REQUIRES
+        core
+        hal
+        drivers
+        freertos
+        esp_timer
+        nvs_flash
+        esp_wifi
+        esp_event
+        esp_netif
+        esp_http_server)

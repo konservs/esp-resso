@@ -1,0 +1,26 @@
+menu "ESP.Resso"
+
+    config ESPRESSO_WIFI_ENABLE
+        bool "Enable Wi-Fi dashboard"
+        default y
+        help
+            Join a Wi-Fi network and serve a live statistics dashboard over HTTP.
+            Disable for a fully offline machine.
+
+    config ESPRESSO_WIFI_SSID
+        string "Wi-Fi SSID"
+        depends on ESPRESSO_WIFI_ENABLE
+        default "your-ssid"
+
+    config ESPRESSO_WIFI_PASSWORD
+        string "Wi-Fi password"
+        depends on ESPRESSO_WIFI_ENABLE
+        default "your-password"
+
+    config ESPRESSO_DASHBOARD_PORT
+        int "Dashboard HTTP port"
+        depends on ESPRESSO_WIFI_ENABLE
+        default 80
+        range 1 65535
+
+endmenu
