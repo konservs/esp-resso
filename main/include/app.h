@@ -80,6 +80,10 @@ void app_get_telemetry(app_telemetry_t *out);
  *  Caller must hold @ref app_state_t::lock. */
 void app_apply_brew_profile(app_state_t *app);
 
+/** Clear saved Wi-Fi credentials and reboot into the SoftAP setup portal.
+ *  Safe to call from any task; a no-op when Wi-Fi is disabled at build time. */
+void net_request_provisioning(void);
+
 /* Task entry points (created in app_main). */
 void control_task(void *arg);
 void safety_task(void *arg);

@@ -8,14 +8,34 @@ menu "ESP.Resso"
             Disable for a fully offline machine.
 
     config ESPRESSO_WIFI_SSID
-        string "Wi-Fi SSID"
+        string "Wi-Fi SSID (optional)"
         depends on ESPRESSO_WIFI_ENABLE
-        default "your-ssid"
+        default ""
+        help
+            Optional compiled-in network. Leave blank to provision Wi-Fi at
+            runtime via the SoftAP setup portal (recommended). If set, it takes
+            precedence over any portal-provisioned credentials.
 
     config ESPRESSO_WIFI_PASSWORD
-        string "Wi-Fi password"
+        string "Wi-Fi password (optional)"
         depends on ESPRESSO_WIFI_ENABLE
-        default "your-password"
+        default ""
+
+    config ESPRESSO_AP_SSID
+        string "Setup-portal AP name"
+        depends on ESPRESSO_WIFI_ENABLE
+        default "ESP-Resso-setup"
+        help
+            SoftAP the device hosts when it has no working credentials, so you
+            can join it and enter your Wi-Fi details from a phone/laptop.
+
+    config ESPRESSO_AP_PASSWORD
+        string "Setup-portal AP password"
+        depends on ESPRESSO_WIFI_ENABLE
+        default "espresso"
+        help
+            8-63 characters for a WPA2-protected setup AP, or blank for an open
+            AP. The AP is only up during provisioning.
 
     config ESPRESSO_DASHBOARD_PORT
         int "Dashboard HTTP port"

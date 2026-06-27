@@ -4,19 +4,42 @@ The ESP32 can join your Wi-Fi and serve a small live dashboard — handy for
 watching warm-up, dialing in shots, and (later) logging statistics. It is
 optional and isolated in `net_task` so it can never disturb control or safety.
 
+## Getting onto Wi-Fi
+
+The device chooses credentials in this order:
+
+1. **Compiled-in** `CONFIG_ESPRESSO_WIFI_SSID`, if you set one in menuconfig.
+2. **Portal-provisioned** credentials saved in NVS (see below).
+3. Otherwise it hosts a **SoftAP setup portal**.
+
+So the recommended flow needs no rebuild to change networks — leave the SSID
+blank and provision at runtime:
+
+1. On first boot (or whenever it can't connect) the device starts a Wi-Fi
+   access point named **`ESP-Resso-setup`** (password `espresso` by default).
+2. Join that network from a phone or laptop and open **`http://192.168.4.1/`**.
+3. The setup page scans for nearby networks — pick yours, enter the password,
+   and **Save & connect**.
+4. Credentials are written to NVS and the device reboots and joins your network.
+
+To change networks later, click **Reconfigure Wi-Fi** on the dashboard (or call
+`net_request_provisioning()`): it clears the saved credentials and reboots back
+into the setup portal.
+
 ## Enable & configure
 
 In `idf.py menuconfig` → **ESP.Resso**:
 
 - **Enable Wi-Fi dashboard** (on by default)
-- **Wi-Fi SSID** / **Wi-Fi password**
+- **Wi-Fi SSID / password** — *optional*; leave blank to use the setup portal
+- **Setup-portal AP name / password** — the `ESP-Resso-setup` AP defaults
 - **Dashboard HTTP port** (default 80)
 
 (Or edit the `CONFIG_ESPRESSO_*` defaults; see
 [`main/Kconfig.projbuild`](../main/Kconfig.projbuild).)
 
-Build & flash, then open `http://<device-ip>/` (the assigned IP is printed in
-`idf.py monitor`).
+Once joined, open `http://<device-ip>/` — the assigned IP is printed in
+`idf.py monitor`.
 
 ## What it serves
 
@@ -46,7 +69,9 @@ under the lock — the web layer never reaches into control state directly.
 - A **shot log** (time/volume/temperature curves) and charts.
 - **OTA** firmware updates (`esp_https_ota`) — the partition table already
   reserves two OTA app slots (see [`partitions.csv`](../partitions.csv)).
-- Wi-Fi **provisioning** (SoftAP or BLE) instead of compiled-in credentials.
+- A **captive-portal DNS** responder (answer every lookup with 192.168.4.1) so
+  the setup page auto-opens when you join `ESP-Resso-setup`, instead of typing
+  the IP. The provisioning flow itself is already implemented above.
 
 ## Security note
 
