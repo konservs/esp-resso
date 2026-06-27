@@ -5,6 +5,7 @@
 #include "driver/i2c_master.h"
 
 #include "drivers/font5x7.h"
+#include "drivers/i2c_bus.h"
 
 #define SSD1306_PAGES (SSD1306_HEIGHT / 8)
 #define FB_SIZE       (SSD1306_WIDTH * SSD1306_PAGES)
@@ -21,16 +22,8 @@ static esp_err_t cmd(uint8_t c)
 
 esp_err_t ssd1306_init(int sda_gpio, int scl_gpio, uint8_t i2c_addr)
 {
-    i2c_master_bus_config_t bus_cfg = {
-        .clk_source = I2C_CLK_SRC_DEFAULT,
-        .i2c_port = -1, /* auto-select */
-        .sda_io_num = sda_gpio,
-        .scl_io_num = scl_gpio,
-        .glitch_ignore_cnt = 7,
-        .flags.enable_internal_pullup = true,
-    };
-    i2c_master_bus_handle_t bus;
-    esp_err_t err = i2c_new_master_bus(&bus_cfg, &bus);
+    /* Create (or reuse) the bus shared with the PCF8574 input expander. */
+    esp_err_t err = i2c_bus_init(sda_gpio, scl_gpio);
     if (err != ESP_OK) {
         return err;
     }
@@ -40,7 +33,7 @@ esp_err_t ssd1306_init(int sda_gpio, int scl_gpio, uint8_t i2c_addr)
         .device_address = i2c_addr,
         .scl_speed_hz = 400000,
     };
-    err = i2c_master_bus_add_device(bus, &dev_cfg, &s_dev);
+    err = i2c_master_bus_add_device(i2c_bus_handle(), &dev_cfg, &s_dev);
     if (err != ESP_OK) {
         return err;
     }

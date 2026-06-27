@@ -31,8 +31,9 @@ A dual-boiler E61 machine:
 | 4 | Optocoupler | 2× control (ESP32→bridge), 2× AC-input sense (per probe) |
 | — | Current-limit resistors | ~4.7 kΩ per probe (≈1–2 mA); see level-sensing.md |
 | 1 | SSD1306 OLED, 128×64, I2C | Status display, address 0x3C |
-| 2 | Momentary push button | UI (A = −/left, B = +/right) |
-| 2 | Microswitch | E61 brew lever, steam knob |
+| 1 | PCF8574 I2C expander | All buttons + switches (address 0x20); frees JTAG pins |
+| 2 | Momentary push button | UI (A = −/left, B = +/right), to PCF8574 P0/P1 |
+| 2 | Microswitch | E61 brew lever, steam knob, to PCF8574 P2/P3 |
 | — | Thermal fuses, over-pressure valve | **Hardware** safety — see safety.md |
 
 ## GPIO map
@@ -47,8 +48,8 @@ Change wiring there.
 | SPI MISO | 19 | |
 | RTD brew CS | 5 | |
 | RTD steam CS | 15 | Strapping pin, but CS idles high → boot-safe |
-| I2C SDA | 21 | SSD1306 |
-| I2C SCL | 22 | SSD1306 |
+| I2C SDA | 21 | Shared: SSD1306 + PCF8574 |
+| I2C SCL | 22 | Shared: SSD1306 + PCF8574 |
 | SSR brew | 25 | Active-high |
 | SSR steam | 26 | Active-high |
 | Pump | 27 | Active-high |
@@ -60,10 +61,29 @@ Change wiring there.
 | Level sense — brew | 35 | **Input-only**, optocoupler output (digital) |
 | Level sense — steam | 36 | **Input-only**, optocoupler output (digital) |
 | Level — reservoir | 39 | **Input-only**, float switch, external pull-up |
-| Button A (−) | 32 | Internal pull-up, active-low |
-| Button B (+) | 33 | Internal pull-up, active-low |
-| Brew lever switch | 16 | Internal pull-up, active-low |
-| Steam knob switch | 17 | Internal pull-up, active-low |
+
+The UI buttons (A/B) and machine switches (brew lever, steam knob) are **not**
+on native GPIOs — they hang off the PCF8574 I2C expander (below). This frees
+**GPIO 16, 17, 32, 33**, which are currently unassigned and reserved for the
+JTAG reshuffle (relocating the brew fill valve, level H-bridge A, and steam RTD
+CS off GPIO 13/14/15 so all four JTAG lines — TDI 12, TCK 13, TMS 14, TDO 15 —
+can be wired).
+
+### I2C input expander (PCF8574, address 0x20)
+
+Eight active-low inputs on one chip, read over I2C alongside the OLED. Each pin
+idles high on the expander's weak pull-up; the contact wires to GND. Bit map
+lives in [`pins.h`](../components/drivers/include/drivers/pins.h) (`EXP_*`).
+
+| Expander pin | Input | Notes |
+|----------|-------|-------|
+| P0 | Button A (−) | UI left / minus |
+| P1 | Button B (+) | UI right / plus |
+| P2 | Brew lever switch | E61 paddle microswitch |
+| P3 | Steam knob switch | Steam valve microswitch |
+| P4–P7 | *spare* | Free for future buttons |
+
+For more than 8 inputs, add a second expander at a different address.
 
 ### ESP32 pin caveats baked into the choices
 
@@ -71,6 +91,9 @@ Change wiring there.
   add external pull-ups/downs for the flow meter and level probes.
 - GPIO **0/2/12** are strapping pins and are avoided as driven outputs. GPIO 15
   is used only as a chip-select (idle high), which is safe at boot.
+- The shared I2C bus wants **external ~4.7 kΩ pull-ups** on SDA/SCL (the OLED
+  breakout usually carries them); the firmware also enables the weak internal
+  pull-ups as a fallback.
 
 ## Sensing details
 

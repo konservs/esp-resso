@@ -10,7 +10,9 @@ idf_component_register(
         "src/hal_esp32_input.c"
         "src/hal_esp32_display.c"
         "src/hal_esp32_storage.c"
+        "src/i2c_bus.c"
         "src/max31865.c"
+        "src/pcf8574.c"
         "src/ssd1306.c"
     INCLUDE_DIRS
         "include"

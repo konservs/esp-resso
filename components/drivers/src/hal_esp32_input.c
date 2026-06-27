@@ -2,56 +2,58 @@
  * @file hal_esp32_input.c
  * @brief The two UI buttons and the brew/steam control switches.
  *
- * All are wired active-low to ground with the internal pull-ups enabled.
- * Reads are raw; the UI task polls slowly (~125 ms), which inherently filters
- * mechanical bounce, and core/buttons interprets gestures from there.
+ * All four inputs now live on a PCF8574 I2C expander (freeing native GPIOs
+ * 13/14/15 for JTAG — see docs/hardware.md). Each is wired active-low to GND;
+ * the expander's weak pull-ups hold an open contact high. Reads are raw: the UI
+ * task polls slowly (~125 ms), which filters mechanical bounce, and
+ * core/buttons interprets gestures from there.
+ *
+ * The whole 8-bit port is read per call; the last good value is cached so a
+ * transient I2C NAK reports the previous state rather than a phantom press.
+ * Spare expander bits (P4..P7) are free for future buttons.
  */
 #include "hal/hal_input.h"
 
-#include "driver/gpio.h"
-
+#include "drivers/pcf8574.h"
 #include "drivers/pins.h"
 
-static void config_input_pullup(int gpio)
-{
-    gpio_config_t cfg = {
-        .pin_bit_mask = 1ULL << gpio,
-        .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_ENABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-    };
-    gpio_config(&cfg);
-}
+/* Idle (nothing pressed) is all-high, since inputs are active-low. */
+static uint8_t s_port = 0xFF;
 
 espresso_result_t hal_input_init(void)
 {
-    config_input_pullup(PIN_BTN_A);
-    config_input_pullup(PIN_BTN_B);
-    config_input_pullup(PIN_SWITCH_BREW);
-    config_input_pullup(PIN_SWITCH_STEAM);
-    return ESPRESSO_OK;
+    return pcf8574_init(PCF8574_I2C_ADDR) == ESP_OK ? ESPRESSO_OK
+                                                    : ESPRESSO_ERR_STATE;
 }
 
-/* Active-low: a pressed/engaged contact pulls the pin to 0. */
-static bool pressed(int gpio)
+/* Refresh the cached port snapshot; keep the last value on an I2C error. */
+static uint8_t read_port(void)
 {
-    return gpio_get_level(gpio) == 0;
+    pcf8574_read(&s_port);
+    return s_port;
+}
+
+/* Active-low: a pressed/engaged contact pulls its expander pin to 0. */
+static bool pressed(uint8_t port, int bit)
+{
+    return ((port >> bit) & 0x01) == 0;
 }
 
 hal_buttons_t hal_buttons_read(void)
 {
+    const uint8_t port = read_port();
     hal_buttons_t b;
-    b.a = pressed(PIN_BTN_A);
-    b.b = pressed(PIN_BTN_B);
+    b.a = pressed(port, EXP_BTN_A);
+    b.b = pressed(port, EXP_BTN_B);
     return b;
 }
 
 bool hal_switch_brew(void)
 {
-    return pressed(PIN_SWITCH_BREW);
+    return pressed(read_port(), EXP_SWITCH_BREW);
 }
 
 bool hal_switch_steam(void)
 {
-    return pressed(PIN_SWITCH_STEAM);
+    return pressed(read_port(), EXP_SWITCH_STEAM);
 }
