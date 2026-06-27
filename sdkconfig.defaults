@@ -4,6 +4,12 @@
 # Target chip.
 CONFIG_IDF_TARGET="esp32"
 
+# 4 MB flash (typical ESP32-WROOM-32). Required by the two-OTA partition layout
+# below (~3.1 MB). If your module has only 2 MB flash, drop one OTA slot in
+# partitions.csv and set CONFIG_ESPTOOLPY_FLASHSIZE_2MB instead.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
+
 # Custom partition table (two OTA slots + nvs) — see partitions.csv.
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
