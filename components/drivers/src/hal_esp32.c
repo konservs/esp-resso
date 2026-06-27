@@ -14,7 +14,7 @@
 
 static const char *TAG = "hal";
 
-espresso_result_t hal_init(void)
+espresso_result_t espresso_hal_init(void)
 {
     espresso_result_t rc = ESPRESSO_OK;
 

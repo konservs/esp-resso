@@ -42,8 +42,10 @@ typedef enum {
     HAL_LEVEL_COUNT
 } hal_level_id_t;
 
-/** Bring up all peripherals. Call once at boot before any other HAL call. */
-espresso_result_t hal_init(void);
+/** Bring up all peripherals. Call once at boot before any other HAL call.
+ *  Named espresso_hal_init (not hal_init) to avoid clashing with the hal_init
+ *  symbol exported by the ESP32 Wi-Fi blobs. */
+espresso_result_t espresso_hal_init(void);
 
 #ifdef __cplusplus
 }

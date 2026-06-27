@@ -86,7 +86,7 @@ void app_main(void)
         ESP_ERROR_CHECK(nvs_flash_init());
     }
 
-    ESP_ERROR_CHECK(hal_init() == ESPRESSO_OK ? ESP_OK : ESP_FAIL);
+    ESP_ERROR_CHECK(espresso_hal_init() == ESPRESSO_OK ? ESP_OK : ESP_FAIL);
 
     g_app.lock = xSemaphoreCreateMutex();
     g_app.events = xQueueCreate(16, sizeof(machine_event_t));
