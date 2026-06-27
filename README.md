@@ -1,7 +1,11 @@
 # ESP.Resso
 
+[![CI](https://github.com/konservs/esp-resso/actions/workflows/ci.yml/badge.svg)](https://github.com/konservs/esp-resso/actions/workflows/ci.yml)
+
 Firmware for an **ESP32-controlled dual-boiler E61 espresso machine**, written
 in C on **ESP-IDF (FreeRTOS)**.
+
+Espresso (/ɛˈsprɛsoʊ/) is a concentrated form of coffee produced by forcing hot water under high pressure through finely ground coffee beans. Originating in Italy, espresso has become one of the most popular coffee-brewing methods worldwide.
 
 The control logic lives in a **portable `core`** that is compiled and
 unit-tested natively on **Windows and Linux** — no hardware required — and also
