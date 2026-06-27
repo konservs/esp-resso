@@ -38,10 +38,17 @@
 /* --- Flow meter (pulse input) --------------------------------------------- */
 #define PIN_FLOW_PULSE    34  /* input-only; external pull-up required */
 
-/* --- Water-level probes (input-only; external pulls required) ------------- */
-#define PIN_LEVEL_BREW       35
-#define PIN_LEVEL_STEAM      36
-#define PIN_LEVEL_RESERVOIR  39
+/* --- Water-level sensing (isolated H-bridge AC; see docs/level-sensing.md) - */
+/* Two pins drive an opto-isolated H-bridge on a FLOATING 12 V rail that applies */
+/* symmetric AC across each probe and the boiler shell (zero net DC -> no       */
+/* electrolysis). Conduction (wet) lights a per-probe AC optocoupler read as a  */
+/* digital input. The cold reservoir uses a simple float switch.               */
+#define PIN_LEVEL_EXC_A      14  /* H-bridge input A (anti-phase)             */
+#define PIN_LEVEL_EXC_B       2  /* H-bridge input B; strapping/LED pin, but  */
+                                 /*   the opto sinks to GND so it idles low   */
+#define PIN_LEVEL_BREW       35  /* brew sense (opto output, digital)         */
+#define PIN_LEVEL_STEAM      36  /* steam sense (opto output, digital)        */
+#define PIN_LEVEL_RESERVOIR  39  /* float switch (input-only, ext. pull-up)   */
 
 /* --- UI buttons (internal pull-ups, active-low) --------------------------- */
 #define PIN_BTN_A         32

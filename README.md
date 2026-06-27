@@ -75,6 +75,7 @@ idf.py -p <PORT> flash monitor
 | [hardware.md](docs/hardware.md) | BOM, GPIO map, wiring, sensor notes |
 | [building.md](docs/building.md) | Full build steps (host + firmware, Win + Linux) |
 | [control.md](docs/control.md) | PID tuning, brew profiles, auto-fill |
+| [level-sensing.md](docs/level-sensing.md) | AC conductivity probes (anti-electrolysis) |
 | [ui.md](docs/ui.md) | Display + 2-button gestures + config menu |
 | [networking.md](docs/networking.md) | Wi-Fi dashboard + telemetry API |
 | [safety.md](docs/safety.md) | Fail-safe philosophy (read this) |

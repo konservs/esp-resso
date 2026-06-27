@@ -7,6 +7,7 @@
 
 #include "driver/gpio.h"
 #include "driver/pulse_cnt.h"
+#include "esp_rom_sys.h"
 
 #include "drivers/pins.h"
 
@@ -62,40 +63,101 @@ void hal_flow_reset(void)
     pcnt_unit_clear_count(s_flow_unit);
 }
 
-static int level_gpio(hal_level_id_t id)
+/* -------------------------------------------------------------------------- */
+/* Water level - isolated H-bridge AC conductivity sensing.                    */
+/* See docs/level-sensing.md.                                                  */
+/*                                                                            */
+/* Two pins drive an opto-isolated H-bridge (floating 12 V) anti-phase, so the */
+/* probe sees symmetric AC across probe<->shell with zero net DC (no           */
+/* electrolysis). When water conducts, a per-probe AC optocoupler asserts a    */
+/* DIGITAL sense input. Sensing is pulsed: a short anti-phase burst per read,  */
+/* then both drive pins idle low. EXC_A and EXC_B are NEVER both high (that    */
+/* would short the bridge) - prefer a driver IC with dead-time as well.        */
+/* -------------------------------------------------------------------------- */
+
+#define LEVEL_EXC_CYCLES   8     /* anti-phase cycles per read            */
+#define LEVEL_SETTLE_US    200   /* opto + 12 V side settle before sample  */
+/* Of the 2*LEVEL_EXC_CYCLES half-cycle samples, this many "conducting"
+ * readings mean WET. Calibrate on the bench. */
+#define LEVEL_WET_MIN_HITS 6
+
+/* Sense input GPIO for a boiler probe (opto-coupler output). */
+static int sense_gpio(hal_level_id_t id)
 {
     switch (id) {
-    case HAL_LEVEL_BREW:      return PIN_LEVEL_BREW;
-    case HAL_LEVEL_STEAM:     return PIN_LEVEL_STEAM;
-    case HAL_LEVEL_RESERVOIR: return PIN_LEVEL_RESERVOIR;
-    default:                  return -1;
+    case HAL_LEVEL_BREW:  return PIN_LEVEL_BREW;
+    case HAL_LEVEL_STEAM: return PIN_LEVEL_STEAM;
+    default:              return -1;
     }
+}
+
+/* Opto output is active-low (its transistor pulls the pulled-up input to GND
+ * while the water conducts). Invert here if your optocoupler wiring differs. */
+static bool conducting(int gpio)
+{
+    return gpio_get_level(gpio) == 0;
 }
 
 espresso_result_t hal_level_init(void)
 {
-    const hal_level_id_t ids[] = { HAL_LEVEL_BREW, HAL_LEVEL_STEAM, HAL_LEVEL_RESERVOIR };
-    for (size_t i = 0; i < sizeof(ids) / sizeof(ids[0]); i++) {
-        const int gpio = level_gpio(ids[i]);
-        gpio_config_t cfg = {
-            .pin_bit_mask = 1ULL << gpio,
-            .mode = GPIO_MODE_INPUT,
-            /* Input-only pins (34-39) need EXTERNAL pulls; configured none. */
-            .pull_up_en = GPIO_PULLUP_DISABLE,
-            .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        };
-        gpio_config(&cfg);
-    }
+    /* H-bridge inputs, both idle low (bridge off). */
+    gpio_config_t exc = {
+        .pin_bit_mask = (1ULL << PIN_LEVEL_EXC_A) | (1ULL << PIN_LEVEL_EXC_B),
+        .mode = GPIO_MODE_OUTPUT,
+    };
+    gpio_config(&exc);
+    gpio_set_level(PIN_LEVEL_EXC_A, 0);
+    gpio_set_level(PIN_LEVEL_EXC_B, 0);
+
+    /* Sense + reservoir inputs. These need EXTERNAL pull-ups (GPIO35/36/39 are
+     * input-only with no internal pulls); the opto output / float switch pull
+     * the line to GND when active. */
+    gpio_config_t in = {
+        .pin_bit_mask = (1ULL << PIN_LEVEL_BREW) | (1ULL << PIN_LEVEL_STEAM) |
+                        (1ULL << PIN_LEVEL_RESERVOIR),
+        .mode = GPIO_MODE_INPUT,
+    };
+    gpio_config(&in);
     return ESPRESSO_OK;
+}
+
+/* Run an anti-phase burst and count conducting half-cycles. */
+static int count_conducting(int sense)
+{
+    int hits = 0;
+    for (int i = 0; i < LEVEL_EXC_CYCLES; i++) {
+        /* Phase +: A high, B low (drop B first to avoid overlap). */
+        gpio_set_level(PIN_LEVEL_EXC_B, 0);
+        gpio_set_level(PIN_LEVEL_EXC_A, 1);
+        esp_rom_delay_us(LEVEL_SETTLE_US);
+        if (conducting(sense)) {
+            hits++;
+        }
+        /* Phase -: B high, A low. */
+        gpio_set_level(PIN_LEVEL_EXC_A, 0);
+        gpio_set_level(PIN_LEVEL_EXC_B, 1);
+        esp_rom_delay_us(LEVEL_SETTLE_US);
+        if (conducting(sense)) {
+            hits++;
+        }
+    }
+    /* Idle the bridge (both low) - pulsed sensing. */
+    gpio_set_level(PIN_LEVEL_EXC_A, 0);
+    gpio_set_level(PIN_LEVEL_EXC_B, 0);
+    return hits;
 }
 
 bool hal_level_present(hal_level_id_t level)
 {
-    const int gpio = level_gpio(level);
-    if (gpio < 0) {
-        return false;
+    if (level == HAL_LEVEL_RESERVOIR) {
+        /* Float switch closed to GND => water present. Adjust polarity to
+         * match your switch wiring. */
+        return gpio_get_level(PIN_LEVEL_RESERVOIR) == 0;
     }
-    /* Probe conducts to a high level when water is present.
-     * TODO: invert here if your level circuit is active-low. */
-    return gpio_get_level(gpio) != 0;
+
+    const int sense = sense_gpio(level);
+    if (sense < 0) {
+        return true; /* unknown probe: fail safe against overfilling */
+    }
+    return count_conducting(sense) >= LEVEL_WET_MIN_HITS;
 }

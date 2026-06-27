@@ -24,7 +24,12 @@ A dual-boiler E61 machine:
 | 1 | Vibratory pump + relay/SSR | Pump for extraction |
 | 2 | Solenoid valve + driver | Brew / steam boiler auto-fill inlets |
 | 1 | Flow meter (Hall, e.g. digmesa/gicar) | Volumetric dosing |
-| 3 | Water-level probe | Brew boiler, steam boiler, reservoir |
+| 2 | Conductivity level probe | Brew + steam boilers (isolated AC-sensed) |
+| 1 | Float switch | Reservoir low-water (reed/magnet) |
+| 1 | Isolated 12 V supply | Floating rail for the sensing H-bridge |
+| 1 | H-bridge (driver IC or 4 transistors) | Anti-phase AC excitation |
+| 4 | Optocoupler | 2× control (ESP32→bridge), 2× AC-input sense (per probe) |
+| — | Current-limit resistors | ~4.7 kΩ per probe (≈1–2 mA); see level-sensing.md |
 | 1 | SSD1306 OLED, 128×64, I2C | Status display, address 0x3C |
 | 2 | Momentary push button | UI (A = −/left, B = +/right) |
 | 2 | Microswitch | E61 brew lever, steam knob |
@@ -50,9 +55,11 @@ Change wiring there.
 | Fill valve (brew) | 13 | Active-high |
 | Fill valve (steam) | 4 | Active-high |
 | Flow meter | 34 | **Input-only**, needs external pull-up |
-| Level brew | 35 | **Input-only**, external pull |
-| Level steam | 36 | **Input-only**, external pull |
-| Level reservoir | 39 | **Input-only**, external pull |
+| Level H-bridge in A | 14 | Opto-isolated H-bridge drive (anti-phase) |
+| Level H-bridge in B | 2 | Anti-phase pair; strapping/LED pin (idles low) |
+| Level sense — brew | 35 | **Input-only**, optocoupler output (digital) |
+| Level sense — steam | 36 | **Input-only**, optocoupler output (digital) |
+| Level — reservoir | 39 | **Input-only**, float switch, external pull-up |
 | Button A (−) | 32 | Internal pull-up, active-low |
 | Button B (+) | 33 | Internal pull-up, active-low |
 | Brew lever switch | 16 | Internal pull-up, active-low |
@@ -73,8 +80,13 @@ Change wiring there.
   a safety trip.
 - **Flow:** Hall flow meter on a pulse counter (`pulse_cnt`). Calibrate
   `FLOW_PULSES_PER_ML` in `hal_esp32_sensors.c` against a measured pour.
-- **Level:** conductive probes read as GPIO; the control loop debounces them and
-  drives auto-fill with hysteresis.
+- **Level:** boiler probes use **opto-isolated H-bridge AC sensing** — two pins
+  (GPIO14/GPIO2) drive an H-bridge on a floating 12 V rail that applies symmetric
+  AC across probe↔shell (zero net DC, so no electrolysis); conduction lights a
+  per-probe AC optocoupler read as a digital input. Galvanic isolation keeps
+  boiler/mains noise off the ESP32. The control loop debounces the result and
+  drives auto-fill. The reservoir uses a float switch. Full circuit and
+  rationale: **[level-sensing.md](level-sensing.md)**.
 
 ## Not in v1 (future)
 
