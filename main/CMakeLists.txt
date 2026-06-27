@@ -9,7 +9,7 @@ idf_component_register(
         "include"
     REQUIRES
         core
-        hal
+        espresso_hal
         drivers
         freertos
         esp_timer

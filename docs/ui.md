@@ -14,7 +14,7 @@ A 128×64 I2C **SSD1306 OLED** (address 0x3C) shows:
 - **Config screens:** the selected menu item and its value.
 
 `hal_display` is a small, panel-agnostic text/graphics API
-([`hal/hal_display.h`](../components/hal/include/hal/hal_display.h)) over an
+([`hal/hal_display.h`](../components/espresso_hal/include/hal/hal_display.h)) over an
 in-RAM framebuffer; the SSD1306 driver
 ([`drivers/ssd1306.c`](../components/drivers/src/ssd1306.c)) implements it. Swap
 in another small display by providing a different `hal_display` backend.

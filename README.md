@@ -31,7 +31,7 @@ Layer (HAL).
 
 ```
 components/core/      Portable control logic (pure C, unit-tested)
-components/hal/        HAL interface headers (the hardware contract)
+components/espresso_hal/  HAL interface headers (the hardware contract)
 components/drivers/    ESP32 drivers + HAL implementations (MAX31865, SSD1306, ...)
 main/                  Firmware app: app_main + FreeRTOS tasks (control/safety/ui/net)
 tests/                 Host unit tests (Unity/fff/CTest) + CMake presets

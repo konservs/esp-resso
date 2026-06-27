@@ -16,7 +16,7 @@ idf_component_register(
         "include"
     REQUIRES
         core
-        hal
+        espresso_hal
     PRIV_REQUIRES
         driver
         esp_timer

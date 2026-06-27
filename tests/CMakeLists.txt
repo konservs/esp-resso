@@ -37,8 +37,8 @@ add_library(fff INTERFACE)
 target_include_directories(fff INTERFACE ${fff_SOURCE_DIR})
 
 # --- Code under test -------------------------------------------------------
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../components/core ${CMAKE_BINARY_DIR}/core)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../components/hal  ${CMAKE_BINARY_DIR}/hal)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../components/core        ${CMAKE_BINARY_DIR}/core)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../components/espresso_hal  ${CMAKE_BINARY_DIR}/espresso_hal)
 
 # Shared test helpers (deterministic clock, etc.).
 add_library(test_support STATIC support/fake_clock.c)
@@ -71,5 +71,5 @@ endforeach()
 
 # --- HAL mocking demo (Unity + fff) ----------------------------------------
 add_executable(test_hal_mock test_hal_mock.c)
-target_link_libraries(test_hal_mock PRIVATE hal unity fff)
+target_link_libraries(test_hal_mock PRIVATE espresso_hal unity fff)
 add_test(NAME test_hal_mock COMMAND test_hal_mock)
