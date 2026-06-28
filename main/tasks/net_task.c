@@ -189,8 +189,8 @@ static bool creds_from_config(wifi_creds_t *c)
         return false;
     }
     memset(c, 0, sizeof(*c));
-    strncpy(c->ssid, ssid, sizeof(c->ssid) - 1);
-    strncpy(c->pass, CONFIG_ESPRESSO_WIFI_PASSWORD, sizeof(c->pass) - 1);
+    snprintf(c->ssid, sizeof(c->ssid), "%s", ssid);
+    snprintf(c->pass, sizeof(c->pass), "%s", CONFIG_ESPRESSO_WIFI_PASSWORD);
     return true;
 }
 
@@ -364,8 +364,8 @@ static esp_err_t provision_post(httpd_req_t *req)
     }
 
     wifi_creds_t c = { 0 };
-    strncpy(c.ssid, ssid_enc, sizeof(c.ssid) - 1);
-    strncpy(c.pass, pass_enc, sizeof(c.pass) - 1);
+    snprintf(c.ssid, sizeof(c.ssid), "%s", ssid_enc);
+    snprintf(c.pass, sizeof(c.pass), "%s", pass_enc);
     creds_save(&c);
     httpd_resp_sendstr(req, "ok");
     ESP_LOGI(TAG, "provisioned SSID '%s'; rebooting to join", c.ssid);
@@ -422,12 +422,12 @@ static void ap_configure(void)
     wifi_config_t ap = { 0 };
     const char *ssid = CONFIG_ESPRESSO_AP_SSID;
     const char *pass = CONFIG_ESPRESSO_AP_PASSWORD;
-    strncpy((char *)ap.ap.ssid, ssid, sizeof(ap.ap.ssid) - 1);
+    snprintf((char *)ap.ap.ssid, sizeof(ap.ap.ssid), "%s", ssid);
     ap.ap.ssid_len = strlen(ssid);
     ap.ap.channel = 1;
     ap.ap.max_connection = 4;
     if (pass[0] != '\0') {
-        strncpy((char *)ap.ap.password, pass, sizeof(ap.ap.password) - 1);
+        snprintf((char *)ap.ap.password, sizeof(ap.ap.password), "%s", pass);
         ap.ap.authmode = WIFI_AUTH_WPA2_PSK;
     } else {
         ap.ap.authmode = WIFI_AUTH_OPEN;
@@ -481,8 +481,12 @@ static void wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 static void start_sta(const wifi_creds_t *c)
 {
     wifi_config_t wc = { 0 };
-    strncpy((char *)wc.sta.ssid, c->ssid, sizeof(wc.sta.ssid) - 1);
-    strncpy((char *)wc.sta.password, c->pass, sizeof(wc.sta.password) - 1);
+    /* These are fixed-size fields, not NUL-terminated C strings (a 32-char SSID
+     * uses all 32 bytes), so copy exactly the used length and leave the
+     * zero-initialised tail — snprintf would both warn and clip a full-length
+     * SSID by one byte. */
+    memcpy(wc.sta.ssid, c->ssid, strnlen(c->ssid, sizeof(wc.sta.ssid)));
+    memcpy(wc.sta.password, c->pass, strnlen(c->pass, sizeof(wc.sta.password)));
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wc));
     ESP_LOGI(TAG, "connecting to '%s'", c->ssid);
