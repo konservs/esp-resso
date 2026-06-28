@@ -86,7 +86,13 @@ void app_main(void)
         ESP_ERROR_CHECK(nvs_flash_init());
     }
 
-    ESP_ERROR_CHECK(espresso_hal_init() == ESPRESSO_OK ? ESP_OK : ESP_FAIL);
+    /* HAL bring-up degrades gracefully: each subsystem logs its own failure and
+     * we continue booting (see hal_esp32.c). A missing display or input expander
+     * must not stop the machine — the safety supervisor still trips the heaters
+     * on a sensor fault at runtime, which is the real fail-safe. */
+    if (espresso_hal_init() != ESPRESSO_OK) {
+        ESP_LOGW(TAG, "HAL init reported failures; continuing (see errors above)");
+    }
 
     g_app.lock = xSemaphoreCreateMutex();
     g_app.events = xQueueCreate(16, sizeof(machine_event_t));
