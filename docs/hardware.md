@@ -20,13 +20,18 @@ A dual-boiler E61 machine:
 | 1 | ESP32 dev module (WROOM-32) | Dual-core, classic ESP32 |
 | 2 | MAX31865 RTD amplifier | One per boiler; 430 Ω reference for PT100 |
 | 2 | PT100 RTD probe | M4/M5 threaded or clamp, boiler temperature |
-| 2 | Solid-state relay (zero-cross) | Switch each boiler heating element |
-| 1 | Vibratory pump + relay/SSR | Pump for extraction |
-| 2 | Solenoid valve + driver | Brew / steam boiler auto-fill inlets |
+| 2 | Solid-state relay (zero-cross) | Boiler heaters (slow-PWM); DC-input, driven at 12 V via the ULN2003 |
+| 1 | Pump + zero-cross SSR | Vibratory or rotary; size the SSR for motor inrush (rotary), zero-cross enables pulse-skip flow (vibratory) |
+| 2 | Mains solenoid valve (230/120 VAC) | Brew / steam auto-fill inlets; OEM Olab type (e.g. Profitec US1005) |
+| 2 | 12 V relay (PCB, ≥ 250 VAC) | Switch each fill solenoid; optional RC/MOV across contacts |
+| 1 | ULN2003A Darlington array | One low-side buffer for all actuators: 3 SSR inputs (heaters + pump) + 2 relay coils; COM→+12 V flyback |
 | 1 | Flow meter (Hall, e.g. digmesa/gicar) | Volumetric dosing |
 | 2 | Conductivity level probe | Brew + steam boilers (isolated AC-sensed) |
 | 1 | Float switch | Reservoir low-water (reed/magnet) |
-| 1 | Isolated 12 V supply | Floating rail for the sensing H-bridge |
+| 1 | 12 V DC PSU (≥ 1 A) | Main supply; logic + sensing + relay coils (fill valves are mains, relay-switched) — see [power.md](power.md) |
+| 1 | Buck regulator 12→5 V | e.g. AP63205 / MP1584 — efficient bulk drop |
+| 1 | LDO 5→3.3 V | e.g. AP2112K-3.3 — low-noise rail for ESP32 + RTDs |
+| 1 | Isolated 12→12 V DC-DC | Floating **+12VA** / **GNDA** rail for the sensing H-bridge (separate ground) |
 | 1 | H-bridge (driver IC or 4 transistors) | Anti-phase AC excitation |
 | 4 | Optocoupler | 2× control (ESP32→bridge), 2× AC-input sense (per probe) |
 | — | Current-limit resistors | ~4.7 kΩ per probe (≈1–2 mA); see level-sensing.md |
@@ -50,11 +55,11 @@ Change wiring there.
 | RTD steam CS | 15 | Strapping pin, but CS idles high → boot-safe |
 | I2C SDA | 21 | Shared: SSD1306 + PCF8574 |
 | I2C SCL | 22 | Shared: SSD1306 + PCF8574 |
-| SSR brew | 25 | Active-high |
-| SSR steam | 26 | Active-high |
-| Pump | 27 | Active-high |
-| Fill valve (brew) | 13 | Active-high |
-| Fill valve (steam) | 4 | Active-high |
+| SSR brew | 25 | Active-high → ULN2003 → heater SSR |
+| SSR steam | 26 | Active-high → ULN2003 → heater SSR |
+| Pump | 27 | Active-high → ULN2003 → pump SSR |
+| Fill valve (brew) | 13 | Active-high → ULN2003 → fill relay |
+| Fill valve (steam) | 4 | Active-high → ULN2003 → fill relay |
 | Flow meter | 34 | **Input-only**, needs external pull-up |
 | Level H-bridge in A | 14 | Opto-isolated H-bridge drive (anti-phase) |
 | Level H-bridge in B | 2 | Anti-phase pair; strapping/LED pin (idles low) |
@@ -95,6 +100,25 @@ For more than 8 inputs, add a second expander at a different address.
   breakout usually carries them); the firmware also enables the weak internal
   pull-ups as a fallback.
 
+## Power
+
+The board runs from a single **12 V DC** input (**+12V** / **GND**); the heaters,
+pump, and fill solenoids are all mains loads (the heaters and pump switched via
+SSR, the fill valves via 12 V relays — all buffered by one ULN2003, never powered
+here). A **buck**
+drops 12 V → 5 V efficiently, then a low-noise **LDO** drops 5 V → 3.3 V for the
+ESP32 and the RTD front-ends — two stages keep the 3.3 V rail quiet without
+cooking a linear regulator (a single 12 V → 3.3 V LDO would dissipate ~1.7 W).
+The level-sensing H-bridge runs on a **separate isolated rail, +12VA / GNDA** (do
+not merge **GNDA** with logic **GND**).
+
+Continuous electronics draw is ≈ **1.5 W** (the ESP32 dominates); the mains loads
+only present their ULN2003 drive currents on +12 V (~12 mA per SSR input, ~35 mA
+per relay coil), so a **12 V / 1 A** supply is enough.
+
+Full rail tree, recommended chips (buck / LDO / isolated DC-DC), decoupling and
+protection, and the per-rail power budget: **[power.md](power.md)**.
+
 ## Sensing details
 
 - **Temperature:** PT100 over MAX31865 (SPI, mode 1). Resistance→temperature
@@ -104,7 +128,7 @@ For more than 8 inputs, add a second expander at a different address.
 - **Flow:** Hall flow meter on a pulse counter (`pulse_cnt`). Calibrate
   `FLOW_PULSES_PER_ML` in `hal_esp32_sensors.c` against a measured pour.
 - **Level:** boiler probes use **opto-isolated H-bridge AC sensing** — two pins
-  (GPIO14/GPIO2) drive an H-bridge on a floating 12 V rail that applies symmetric
+  (GPIO14/GPIO2) drive an H-bridge on the floating **+12VA** / **GNDA** rail that applies symmetric
   AC across probe↔shell (zero net DC, so no electrolysis); conduction lights a
   per-probe AC optocoupler read as a digital input. Galvanic isolation keeps
   boiler/mains noise off the ESP32. The control loop debounces the result and

@@ -27,3 +27,17 @@ coverage*/
 Thumbs.db
 
 .claude/prompts.md
+
+# KiCad — auto-generated / local-only (the .kicad_pro/.kicad_sch/.kicad_pcb are tracked)
+*-backups/
+fp-info-cache
+*.lck
+*.kicad_prl
+_autosave-*
+*.kicad_pcb-bak
+*.kicad_sch-bak
+*.bak
+*.000
+*.net
+*.dsn
+*.ses

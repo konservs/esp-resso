@@ -26,11 +26,11 @@
 #define SSD1306_I2C_ADDR  0x3C
 #define PCF8574_I2C_ADDR  0x20  /* A2..A0 = GND; 0x38 for a PCF8574A part */
 
-/* --- Heaters (solid-state relays, active-high) ---------------------------- */
+/* --- Heaters (solid-state relays, active-high via ULN2003 buffer) --------- */
 #define PIN_SSR_BREW      25
 #define PIN_SSR_STEAM     26
 
-/* --- Pump and auto-fill solenoid valves (active-high relays/MOSFETs) ------ */
+/* --- Pump (SSR) and auto-fill valves (relays), active-high via ULN2003 ---- */
 /* The E61 group's 3-way valve is mechanical (lever-actuated) — no GPIO. */
 #define PIN_PUMP          27
 #define PIN_VALVE_FILL_BREW   13

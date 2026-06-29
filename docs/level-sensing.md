@@ -9,11 +9,11 @@ per boiler — autofill runs the pump + inlet valve until the probe is covered.
 The catch: you must sense this **without net DC through the water**, or you get
 electrolysis (H₂/O₂), probe erosion, and scale. See [safety.md](safety.md).
 
-## Approach: opto-isolated H-bridge on a floating 12 V rail
+## Approach: opto-isolated H-bridge on a floating +12VA rail
 
 We drive the probe with **true AC** from an **H-bridge** and keep the whole
 sensing front-end **galvanically isolated** from the ESP32 (optocouplers +
-an isolated 12 V supply). This is essentially how commercial autofill
+an isolated +12VA supply). This is essentially how commercial autofill
 controllers work, and it's robust: 12 V gives a strong, noise-immune signal, and
 isolation keeps the mains-/earth-referenced boiler off the MCU (no ground loops).
 
@@ -31,7 +31,7 @@ through an H-bridge reverse the current each half-cycle, giving symmetric AC wit
 
 An H-bridge needs its load to **float** (both ends driven). Our boiler shell is
 bonded to **earth**, which would normally pin one end. The fix is to run the
-bridge from an **isolated 12 V supply**: the sensing current loop then floats
+bridge from an **isolated +12VA / GNDA supply**: the sensing current loop then floats
 relative to the ESP32/earth, so the bridge can swing the probe both sides of the
 shell. The shell stays earthed for safety; the *measurement loop* is what's
 isolated.
@@ -45,7 +45,7 @@ at the shell. One H-bridge excites both probes; each probe has its own AC
 optocoupler → its own ESP32 input.
 
 ```
-   ESP32 (3.3 V)     ║ isolation ║     Isolated / floating 12 V domain
+   ESP32 (3.3 V)     ║ isolation ║     Isolated +12VA / GNDA domain (floating)
    --------------    ║  barrier  ║     -------------------------------------
    GPIO14 EXC_A ─[opto1]═════════════►  H-bridge IN_A
    GPIO2  EXC_B ─[opto2]═════════════►  H-bridge IN_B
@@ -76,7 +76,7 @@ optocoupler → its own ESP32 input.
   series with that probe's drive line — lights on **either** half-cycle when its
   water conducts; its output is a clean **digital** wet/dry back to the ESP32.
   No ADC needed, and the two boilers are read independently.
-- **opto1/opto2** isolate the H-bridge inputs; the 12 V rail is isolated → the
+- **opto1/opto2** isolate the H-bridge inputs; **+12VA** is isolated → the
   ESP32 is fully galvanically separated from the boiler. The single earth tie is
   `RET`↔chassis (the shells); keep it the only one.
 
@@ -114,10 +114,10 @@ external pull-up (GPIO39 is input-only and has no internal pull).
 
 ## Safety / isolation notes
 
-- Keep the **isolation barrier** intact: do **not** join the ESP32 ground to the
-  12 V sensing ground. That separation is what makes the H-bridge valid on a
-  grounded shell and what protects the MCU.
-- Use an **isolated** 12 V source (isolated DC-DC or separate winding).
+- Keep the **isolation barrier** intact: do **not** join logic **GND** to
+  **GNDA** (the sensing ground). That separation is what makes the H-bridge valid
+  on a grounded shell and what protects the MCU.
+- Use an **isolated** source for **+12VA** / **GNDA** (isolated DC-DC or separate winding).
 - The probe lead is a long antenna in a hot, electrically noisy machine — the
   opto-isolated digital signal is far more robust here than an analog one.
 
