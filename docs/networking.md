@@ -23,7 +23,8 @@ blank and provision at runtime:
    "sign in to network" sheet on connect. If yours doesn't, open
    **`http://192.168.4.1/`** manually.
 3. The setup page scans for nearby networks — pick yours, enter the password,
-   and **Save & connect**.
+   and also set a **user** and an **admin** password for the web dashboard.
+   Then **Save & connect**.
 4. Credentials are written to NVS and the device reboots and joins your network.
 
 To change networks later, click **Reconfigure Wi-Fi** on the dashboard (or call
@@ -87,8 +88,26 @@ under the lock — the web layer never reaches into control state directly.
 - **mDNS** (`espresso.local`) so the dashboard has a stable name without needing
   a static IP or hunting for the DHCP address.
 
+## Access control
+
+The dashboard uses **HTTP Basic auth** with two roles, set on the setup portal:
+
+- **`user`** — read-only: the status + diagnostics view.
+- **`admin`** — everything `user` can see, plus control actions (currently
+  *Reconfigure Wi-Fi*; machine settings and network re-setup land here too).
+
+Log in with the username `user` or `admin` and the matching password. The page
+hides admin-only controls when you are logged in as `user`. Passwords are stored
+as salted SHA-256 hashes in NVS (key `auth`), never in clear text.
+
+If no credentials are configured yet (e.g. a device provisioned before this
+feature existed), the dashboard is **open** so you are never locked out — set
+passwords by re-running the setup portal (*Reconfigure Wi-Fi*).
+
 ## Security note
 
-The dashboard is plain HTTP with no authentication — fine on a trusted home
-network, but do not expose it directly to the internet. Put it behind your
-router/firewall, or add auth/TLS before remote access.
+Basic auth sends credentials base64-encoded over **plain HTTP (no TLS)**, so they
+cross your LAN unencrypted, and the password hashing is a fixed-salt SHA-256
+(not bcrypt). This is fine on a trusted home network — but do not expose the
+dashboard directly to the internet. Keep it behind your router/firewall, or add
+TLS and a stronger scheme before any remote access.

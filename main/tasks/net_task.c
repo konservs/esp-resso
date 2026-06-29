@@ -53,10 +53,13 @@ static const char *TAG = "net";
 #include "esp_system.h"
 #include "esp_wifi.h"
 #include "lwip/sockets.h"
+#include "mbedtls/base64.h"
+#include "mbedtls/sha256.h"
 
 #include "hal/hal_storage.h"
 
 #define WIFI_NVS_KEY   "wifi"   /* hal_storage blob key for saved credentials. */
+#define AUTH_NVS_KEY   "auth"   /* hal_storage blob key for web credentials.    */
 #define STA_MAX_RETRY  10       /* Initial-connect attempts before the portal.  */
 #define SCAN_MAX_APS   16       /* Networks reported by /api/scan.               */
 #define PORTAL_PORT    80       /* Captive detection only probes port 80.        */
@@ -72,6 +75,16 @@ typedef struct {
     char ssid[33]; /* 32 + NUL */
     char pass[65]; /* 64 + NUL */
 } wifi_creds_t;
+
+/* Web-interface access roles: user = read-only, admin = full control. */
+typedef enum { ROLE_NONE = 0, ROLE_USER, ROLE_ADMIN } auth_role_t;
+
+/* Stored web credentials: salted SHA-256 of each password (set on the portal). */
+typedef struct {
+    uint8_t user_hash[32];
+    uint8_t admin_hash[32];
+    uint8_t set; /* 1 once configured */
+} auth_creds_t;
 
 /* ------------------------------------------------------------------------- */
 /* Pages (self-contained: no external assets, single-quoted attributes).     */
@@ -106,7 +119,7 @@ static const char DASHBOARD_HTML[] =
     "<div class='row'><span class='k'>Water level</span><span id='sl' class='st'>--</span></div>"
     "</div>"
     "<div class='card'><div class='row'><span class='k'>Shot</span><span id='shot' class='st'>--</span></div></div>"
-    "<div class='card'><button onclick='forget()'>Reconfigure Wi-Fi</button></div>"
+    "<div class='card' id='admin' style='display:none'><button onclick='forget()'>Reconfigure Wi-Fi</button></div>"
     "<script>"
     "function g(id){return document.getElementById(id)}"
     "var LVL=['Full','Filling','Low','Error'],LC=['ok','warn','warn','err'];"
@@ -122,6 +135,7 @@ static const char DASHBOARD_HTML[] =
     "setTemp(g('bt'),d.brew);setLevel(g('bl'),d.brew.level);"
     "setTemp(g('stt'),d.steam);setLevel(g('sl'),d.steam.level);"
     "g('shot').className='st';g('shot').textContent=(d.shot.ms/1000).toFixed(1)+'s / '+d.shot.ml.toFixed(0)+'ml';"
+    "g('admin').style.display=d.role==='admin'?'':'none';"
     "}catch(e){g('state').textContent='offline'}}"
     "async function forget(){if(!confirm('Forget Wi-Fi and reboot into setup mode?'))return;"
     "await fetch('/api/forget',{method:'POST'});"
@@ -145,7 +159,9 @@ static const char SETUP_HTML[] =
     "<div class='r'><select id='nets'><option value=''>-- scan for networks --</option></select>"
     "<button type='button' onclick='scan()'>&#x21bb;</button></div>"
     "<label>Network (SSID)</label><input id='ssid' autocapitalize='off' autocorrect='off'>"
-    "<label>Password</label><input id='pass' type='password'>"
+    "<label>Wi-Fi password</label><input id='pass' type='password'>"
+    "<label>User password (dashboard, view only)</label><input id='upw' type='password'>"
+    "<label>Admin password (full control)</label><input id='apw' type='password'>"
     "<button onclick='save()'>Save &amp; connect</button>"
     "<div id='msg'></div>"
     "<script>"
@@ -158,8 +174,11 @@ static const char SETUP_HTML[] =
     "g('msg').textContent=a.length?'':'No networks found.'}"
     "catch(e){g('msg').textContent='Scan failed.'}}"
     "async function save(){const ssid=g('ssid').value;if(!ssid){g('msg').textContent='Enter a network name.';return}"
+    "const up=g('upw').value,ap=g('apw').value;"
+    "if(!up||!ap){g('msg').textContent='Set both the user and admin passwords.';return}"
     "g('msg').textContent='Saving...';"
-    "const body='ssid='+encodeURIComponent(ssid)+'&pass='+encodeURIComponent(g('pass').value);"
+    "const body='ssid='+encodeURIComponent(ssid)+'&pass='+encodeURIComponent(g('pass').value)"
+    "+'&userpw='+encodeURIComponent(up)+'&adminpw='+encodeURIComponent(ap);"
     "try{const r=await fetch('/api/provision',{method:'POST',"
     "headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body});"
     "g('msg').textContent=r.ok?('Saved. The machine is rebooting to join '+ssid+'.'):'Save failed.';}"
@@ -221,6 +240,27 @@ static bool creds_from_config(wifi_creds_t *c)
     return true;
 }
 
+static bool auth_load(auth_creds_t *a)
+{
+    return hal_storage_load(AUTH_NVS_KEY, a, sizeof(*a)) == ESPRESSO_OK && a->set;
+}
+
+static void auth_save(const auth_creds_t *a)
+{
+    if (hal_storage_save(AUTH_NVS_KEY, a, sizeof(*a)) != ESPRESSO_OK) {
+        ESP_LOGE(TAG, "failed to persist web credentials");
+    }
+}
+
+/* Salted SHA-256 of a password. Not bcrypt, but adequate for a LAN appliance:
+ * Basic auth sends the password each request, so we hash and compare. */
+static void hash_password(const char *pw, uint8_t out[32])
+{
+    char buf[160];
+    snprintf(buf, sizeof(buf), "esp-resso-v1:%s", pw);
+    mbedtls_sha256((const unsigned char *)buf, strlen(buf), out, 0);
+}
+
 /* ------------------------------------------------------------------------- */
 /* Small string helpers                                                      */
 /* ------------------------------------------------------------------------- */
@@ -262,11 +302,68 @@ static int json_escape(char *out, size_t cap, const uint8_t *in, size_t len)
 }
 
 /* ------------------------------------------------------------------------- */
+/* Authentication (HTTP Basic; user = read-only, admin = control)            */
+/* ------------------------------------------------------------------------- */
+
+static esp_err_t deny(httpd_req_t *req)
+{
+    httpd_resp_set_status(req, "401 Unauthorized");
+    httpd_resp_set_hdr(req, "WWW-Authenticate", "Basic realm=\"ESP.Resso\"");
+    return httpd_resp_send(req, "Authentication required", HTTPD_RESP_USE_STRLEN);
+}
+
+/* Resolve the caller's role from the Basic Authorization header. If no
+ * credentials are configured yet (e.g. the device was provisioned before this
+ * feature), access is open so it is never locked out — set passwords via the
+ * setup portal to enable enforcement. */
+static auth_role_t check_auth(httpd_req_t *req)
+{
+    auth_creds_t a;
+    if (!auth_load(&a)) {
+        return ROLE_ADMIN; /* not configured -> open */
+    }
+
+    char hdr[160];
+    if (httpd_req_get_hdr_value_str(req, "Authorization", hdr, sizeof(hdr)) != ESP_OK ||
+        strncmp(hdr, "Basic ", 6) != 0) {
+        return ROLE_NONE;
+    }
+
+    unsigned char dec[160];
+    size_t dlen = 0;
+    if (mbedtls_base64_decode(dec, sizeof(dec) - 1, &dlen,
+                              (const unsigned char *)hdr + 6, strlen(hdr + 6)) != 0) {
+        return ROLE_NONE;
+    }
+    dec[dlen] = '\0';
+    char *colon = strchr((char *)dec, ':');
+    if (colon == NULL) {
+        return ROLE_NONE;
+    }
+    *colon = '\0';
+    const char *user = (const char *)dec;
+    const char *pass = colon + 1;
+
+    uint8_t h[32];
+    hash_password(pass, h);
+    if (strcmp(user, "admin") == 0 && memcmp(h, a.admin_hash, sizeof(h)) == 0) {
+        return ROLE_ADMIN;
+    }
+    if (strcmp(user, "user") == 0 && memcmp(h, a.user_hash, sizeof(h)) == 0) {
+        return ROLE_USER;
+    }
+    return ROLE_NONE;
+}
+
+/* ------------------------------------------------------------------------- */
 /* HTTP handlers — dashboard (station mode)                                  */
 /* ------------------------------------------------------------------------- */
 
 static esp_err_t root_get(httpd_req_t *req)
 {
+    if (check_auth(req) < ROLE_USER) {
+        return deny(req);
+    }
     httpd_resp_set_type(req, "text/html");
     return httpd_resp_send(req, DASHBOARD_HTML, HTTPD_RESP_USE_STRLEN);
 }
@@ -282,19 +379,25 @@ static esp_err_t favicon_get(httpd_req_t *req)
 
 static esp_err_t telemetry_get(httpd_req_t *req)
 {
+    const auth_role_t role = check_auth(req);
+    if (role < ROLE_USER) {
+        return deny(req);
+    }
+
     app_telemetry_t t;
     app_get_telemetry(&t);
 
     char buf[512];
     const int n = snprintf(
         buf, sizeof(buf),
-        "{\"state\":\"%s\",\"safety\":\"%s\",\"ready\":%s,"
+        "{\"state\":\"%s\",\"safety\":\"%s\",\"ready\":%s,\"role\":\"%s\","
         "\"display\":%s,\"buttons\":%s,\"reservoir\":%s,"
         "\"brew\":{\"t\":%.1f,\"sp\":%.1f,\"ok\":%s,\"fault\":%u,\"level\":%d},"
         "\"steam\":{\"t\":%.1f,\"sp\":%.1f,\"ok\":%s,\"fault\":%u,\"level\":%d},"
         "\"shot\":{\"ml\":%.1f,\"ms\":%lu}}",
         machine_state_name(t.state), safety_trip_name(t.safety_trip),
         t.both_ready ? "true" : "false",
+        role == ROLE_ADMIN ? "admin" : "user",
         t.display_ok ? "true" : "false", t.buttons_ok ? "true" : "false",
         t.reservoir_ok ? "true" : "false",
         (double)t.brew_temp, (double)t.brew_setpoint,
@@ -311,6 +414,9 @@ static esp_err_t telemetry_get(httpd_req_t *req)
 
 static esp_err_t forget_post(httpd_req_t *req)
 {
+    if (check_auth(req) < ROLE_ADMIN) {
+        return deny(req);
+    }
     creds_clear();
     httpd_resp_sendstr(req, "ok");
     ESP_LOGW(TAG, "Wi-Fi credentials cleared; rebooting into setup portal");
@@ -376,9 +482,9 @@ static esp_err_t scan_get(httpd_req_t *req)
 
 static esp_err_t provision_post(httpd_req_t *req)
 {
-    /* Big enough for "ssid=<32 enc>&pass=<64 enc>"; percent-encoding can triple
-     * each character, so decode into roomy temporaries before clamping. */
-    char body[512];
+    /* Holds ssid + Wi-Fi password + user/admin passwords, percent-encoded
+     * (which can triple each character); decode into roomy temporaries. */
+    char body[1024];
     int len = req->content_len < (int)sizeof(body) - 1 ? req->content_len
                                                        : (int)sizeof(body) - 1;
     int got = 0;
@@ -392,24 +498,33 @@ static esp_err_t provision_post(httpd_req_t *req)
     body[got] = '\0';
 
     char ssid_enc[128] = { 0 }, pass_enc[256] = { 0 };
-    if (httpd_query_key_value(body, "ssid", ssid_enc, sizeof(ssid_enc)) != ESP_OK) {
-        httpd_resp_set_status(req, "400 Bad Request");
-        return httpd_resp_sendstr(req, "missing ssid");
-    }
+    char upw_enc[160] = { 0 }, apw_enc[160] = { 0 };
+    httpd_query_key_value(body, "ssid", ssid_enc, sizeof(ssid_enc));
     httpd_query_key_value(body, "pass", pass_enc, sizeof(pass_enc));
+    httpd_query_key_value(body, "userpw", upw_enc, sizeof(upw_enc));
+    httpd_query_key_value(body, "adminpw", apw_enc, sizeof(apw_enc));
     urldecode(ssid_enc);
     urldecode(pass_enc);
-    if (ssid_enc[0] == '\0') {
+    urldecode(upw_enc);
+    urldecode(apw_enc);
+    if (ssid_enc[0] == '\0' || upw_enc[0] == '\0' || apw_enc[0] == '\0') {
         httpd_resp_set_status(req, "400 Bad Request");
-        return httpd_resp_sendstr(req, "missing ssid");
+        return httpd_resp_sendstr(req, "ssid and both passwords are required");
     }
+
+    /* Persist hashed web credentials, then the Wi-Fi network. */
+    auth_creds_t auth = { 0 };
+    hash_password(upw_enc, auth.user_hash);
+    hash_password(apw_enc, auth.admin_hash);
+    auth.set = 1;
+    auth_save(&auth);
 
     wifi_creds_t c = { 0 };
     snprintf(c.ssid, sizeof(c.ssid), "%s", ssid_enc);
     snprintf(c.pass, sizeof(c.pass), "%s", pass_enc);
     creds_save(&c);
     httpd_resp_sendstr(req, "ok");
-    ESP_LOGI(TAG, "provisioned SSID '%s'; rebooting to join", c.ssid);
+    ESP_LOGI(TAG, "provisioned SSID '%s' + web credentials; rebooting", c.ssid);
     vTaskDelay(pdMS_TO_TICKS(1500)); /* let the response flush */
     esp_restart();
     return ESP_OK;
