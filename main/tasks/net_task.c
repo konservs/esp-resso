@@ -45,17 +45,22 @@ static const char *TAG = "net";
 #include <stdlib.h>
 #include <string.h>
 
+#include "freertos/task.h"
+
 #include "esp_event.h"
 #include "esp_http_server.h"
 #include "esp_netif.h"
 #include "esp_system.h"
 #include "esp_wifi.h"
+#include "lwip/sockets.h"
 
 #include "hal/hal_storage.h"
 
 #define WIFI_NVS_KEY   "wifi"   /* hal_storage blob key for saved credentials. */
 #define STA_MAX_RETRY  10       /* Initial-connect attempts before the portal.  */
 #define SCAN_MAX_APS   16       /* Networks reported by /api/scan.               */
+#define PORTAL_PORT    80       /* Captive detection only probes port 80.        */
+#define CAPTIVE_IP     "192.168.4.1" /* Default SoftAP gateway address.          */
 
 /* Persisted (and posted) credentials. Fixed size so the NVS blob length is
  * stable — hal_storage_load requires an exact size match. */
@@ -150,10 +155,13 @@ static const char SETUP_HTML[] =
 typedef enum { NET_CONNECTING, NET_PORTAL } net_state_t;
 
 static httpd_handle_t s_server;
+static esp_netif_t   *s_sta_netif;     /* Kept so we can set a static IP.     */
+static esp_netif_t   *s_ap_netif;      /* Kept for the captive DNS offer.     */
 static net_state_t    s_state;
 static int            s_retry;
 static bool           s_been_online;   /* Got an IP at least once.            */
 static bool           s_hardcoded;     /* SSID came from menuconfig.          */
+static bool           s_dns_started;   /* Captive DNS task running.           */
 static volatile bool  s_req_dashboard; /* Event -> net_task: start dashboard. */
 static volatile bool  s_req_portal;    /* Event -> net_task: enter portal.    */
 
@@ -375,16 +383,117 @@ static esp_err_t provision_post(httpd_req_t *req)
 }
 
 /* ------------------------------------------------------------------------- */
+/* Captive portal — hijack DNS so any lookup resolves to the SoftAP, and      */
+/* redirect unknown URLs to the setup page, so the OS auto-opens it.          */
+/* ------------------------------------------------------------------------- */
+
+/* Answer every DNS query with an A record pointing at the SoftAP (192.168.4.1).
+ * That is what makes phones/laptops pop the "sign in to network" sheet. */
+static void captive_dns_task(void *arg)
+{
+    (void)arg;
+    const int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (sock < 0) {
+        ESP_LOGE(TAG, "captive DNS: socket failed");
+        vTaskDelete(NULL);
+        return;
+    }
+    struct sockaddr_in bind_addr = {
+        .sin_family = AF_INET,
+        .sin_port = htons(53),
+        .sin_addr.s_addr = htonl(INADDR_ANY),
+    };
+    if (bind(sock, (struct sockaddr *)&bind_addr, sizeof(bind_addr)) < 0) {
+        ESP_LOGE(TAG, "captive DNS: bind failed");
+        close(sock);
+        vTaskDelete(NULL);
+        return;
+    }
+
+    uint8_t pkt[256];
+    for (;;) {
+        struct sockaddr_in src;
+        socklen_t slen = sizeof(src);
+        const int n = recvfrom(sock, pkt, sizeof(pkt), 0, (struct sockaddr *)&src, &slen);
+        /* Need a header (12B) + at least one question, and it must be a query. */
+        if (n < 13 || (pkt[2] & 0x80)) {
+            continue;
+        }
+        /* Walk the QNAME labels to find the end of the question section. */
+        int q = 12;
+        while (q < n && pkt[q] != 0) {
+            q += pkt[q] + 1;
+        }
+        q += 1 + 4; /* zero byte + QTYPE + QCLASS */
+        if (q + 16 > (int)sizeof(pkt) || q > n) {
+            continue; /* malformed or no room for our answer */
+        }
+
+        pkt[2] |= 0x84; /* QR=1 (response), AA=1 */
+        pkt[3] = 0x00;  /* RA=0, RCODE=0 */
+        pkt[6] = 0x00; pkt[7] = 0x01; /* ANCOUNT = 1 */
+        pkt[8] = pkt[9] = pkt[10] = pkt[11] = 0x00; /* NS/AR = 0 */
+
+        uint8_t *a = pkt + q;
+        a[0] = 0xC0; a[1] = 0x0C;        /* name: pointer to the question name */
+        a[2] = 0x00; a[3] = 0x01;        /* TYPE  = A   */
+        a[4] = 0x00; a[5] = 0x01;        /* CLASS = IN  */
+        a[6] = a[7] = a[8] = a[9] = 0;   /* TTL   = 0   */
+        a[10] = 0x00; a[11] = 0x04;      /* RDLENGTH = 4 */
+        a[12] = 192; a[13] = 168; a[14] = 4; a[15] = 1; /* 192.168.4.1 */
+
+        sendto(sock, pkt, q + 16, 0, (struct sockaddr *)&src, slen);
+    }
+}
+
+static void captive_dns_start(void)
+{
+    if (s_dns_started) {
+        return;
+    }
+    s_dns_started = true;
+    xTaskCreate(captive_dns_task, "captive_dns", 3072, NULL, 4, NULL);
+}
+
+/* Redirect any unknown URL to the setup page (the OS's connectivity-check probe
+ * lands here and triggers the captive-portal UI). */
+static esp_err_t portal_redirect(httpd_req_t *req, httpd_err_code_t err)
+{
+    (void)err;
+    httpd_resp_set_status(req, "302 Found");
+    httpd_resp_set_hdr(req, "Location", "http://" CAPTIVE_IP "/");
+    httpd_resp_send(req, NULL, 0);
+    return ESP_OK;
+}
+
+/* Make the SoftAP's DHCP server hand out 192.168.4.1 as the DNS server, so
+ * clients send their lookups to our captive DNS (the ESP32 AP doesn't offer DNS
+ * by default). Called once the AP is up: stop, set the option, restart. */
+static void configure_ap_dns(void)
+{
+    esp_netif_dns_info_t dns = { 0 };
+    dns.ip.type = ESP_IPADDR_TYPE_V4;
+    esp_netif_str_to_ip4(CAPTIVE_IP, &dns.ip.u_addr.ip4);
+
+    esp_netif_dhcps_stop(s_ap_netif); /* ignore "already stopped" */
+    esp_netif_set_dns_info(s_ap_netif, ESP_NETIF_DNS_MAIN, &dns);
+    uint8_t offer_dns = 0x02; /* dhcps OFFER_DNS bit */
+    esp_netif_dhcps_option(s_ap_netif, ESP_NETIF_OP_SET,
+                           ESP_NETIF_DOMAIN_NAME_SERVER, &offer_dns, sizeof(offer_dns));
+    esp_netif_dhcps_start(s_ap_netif);
+}
+
+/* ------------------------------------------------------------------------- */
 /* Server + Wi-Fi bring-up                                                   */
 /* ------------------------------------------------------------------------- */
 
-static void server_start(void)
+static void server_start(uint16_t port)
 {
     if (s_server != NULL) {
         return;
     }
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
-    cfg.server_port = CONFIG_ESPRESSO_DASHBOARD_PORT;
+    cfg.server_port = port;
     if (httpd_start(&s_server, &cfg) != ESP_OK) {
         ESP_LOGE(TAG, "failed to start HTTP server");
     }
@@ -399,7 +508,7 @@ static void register_uri(const char *uri, httpd_method_t method,
 
 static void start_dashboard(void)
 {
-    server_start();
+    server_start(CONFIG_ESPRESSO_DASHBOARD_PORT);
     register_uri("/", HTTP_GET, root_get);
     register_uri("/api/telemetry", HTTP_GET, telemetry_get);
     register_uri("/api/forget", HTTP_POST, forget_post);
@@ -408,10 +517,14 @@ static void start_dashboard(void)
 
 static void start_portal_server(void)
 {
-    server_start();
+    server_start(PORTAL_PORT); /* captive detection only checks port 80 */
     register_uri("/", HTTP_GET, setup_get);
     register_uri("/api/scan", HTTP_GET, scan_get);
     register_uri("/api/provision", HTTP_POST, provision_post);
+    /* Anything else (the OS connectivity-check URL) -> redirect to the page. */
+    httpd_register_err_handler(s_server, HTTPD_404_NOT_FOUND, portal_redirect);
+    configure_ap_dns(); /* advertise ourselves as DNS so the hijack is used */
+    captive_dns_start();
 }
 
 /* Switch the radio to AP+STA and bring the setup AP up. Valid whether or not
@@ -492,12 +605,36 @@ static void start_sta(const wifi_creds_t *c)
     ESP_LOGI(TAG, "connecting to '%s'", c->ssid);
 }
 
+/* Pin the station interface to a fixed address instead of using DHCP. */
+static void apply_static_ip(esp_netif_t *sta)
+{
+#if CONFIG_ESPRESSO_WIFI_STATIC_IP
+    esp_netif_dhcpc_stop(sta); /* ignore "already stopped" */
+
+    esp_netif_ip_info_t ip = { 0 };
+    esp_netif_str_to_ip4(CONFIG_ESPRESSO_WIFI_IP, &ip.ip);
+    esp_netif_str_to_ip4(CONFIG_ESPRESSO_WIFI_GATEWAY, &ip.gw);
+    esp_netif_str_to_ip4(CONFIG_ESPRESSO_WIFI_NETMASK, &ip.netmask);
+    ESP_ERROR_CHECK(esp_netif_set_ip_info(sta, &ip));
+
+    esp_netif_dns_info_t dns = { 0 };
+    dns.ip.type = ESP_IPADDR_TYPE_V4;
+    esp_netif_str_to_ip4(CONFIG_ESPRESSO_WIFI_DNS, &dns.ip.u_addr.ip4);
+    esp_netif_set_dns_info(sta, ESP_NETIF_DNS_MAIN, &dns);
+
+    ESP_LOGI(TAG, "static IP %s configured", CONFIG_ESPRESSO_WIFI_IP);
+#else
+    (void)sta; /* DHCP (default) */
+#endif
+}
+
 static void wifi_preinit(void)
 {
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
-    esp_netif_create_default_wifi_sta();
-    esp_netif_create_default_wifi_ap();
+    s_sta_netif = esp_netif_create_default_wifi_sta();
+    s_ap_netif = esp_netif_create_default_wifi_ap();
+    apply_static_ip(s_sta_netif);
 
     wifi_init_config_t init = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&init));

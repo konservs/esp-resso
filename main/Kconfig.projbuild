@@ -43,4 +43,33 @@ menu "ESP.Resso"
         default 80
         range 1 65535
 
+    config ESPRESSO_WIFI_STATIC_IP
+        bool "Use a static IP in station mode"
+        depends on ESPRESSO_WIFI_ENABLE
+        default n
+        help
+            Off = DHCP (the device asks your router for an address — default).
+            On = use the fixed address below. Handy if you want a stable URL or
+            to add a DHCP reservation isn't possible.
+
+    config ESPRESSO_WIFI_IP
+        string "Static IP address"
+        depends on ESPRESSO_WIFI_STATIC_IP
+        default "192.168.1.50"
+
+    config ESPRESSO_WIFI_GATEWAY
+        string "Gateway"
+        depends on ESPRESSO_WIFI_STATIC_IP
+        default "192.168.1.1"
+
+    config ESPRESSO_WIFI_NETMASK
+        string "Netmask"
+        depends on ESPRESSO_WIFI_STATIC_IP
+        default "255.255.255.0"
+
+    config ESPRESSO_WIFI_DNS
+        string "DNS server"
+        depends on ESPRESSO_WIFI_STATIC_IP
+        default "192.168.1.1"
+
 endmenu

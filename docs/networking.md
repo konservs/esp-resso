@@ -17,7 +17,11 @@ blank and provision at runtime:
 
 1. On first boot (or whenever it can't connect) the device starts a Wi-Fi
    access point named **`ESP-Resso-setup`** (password `espresso` by default).
-2. Join that network from a phone or laptop and open **`http://192.168.4.1/`**.
+2. Join that network from a phone or laptop. The setup page **opens
+   automatically** — the device runs a captive portal (it hijacks DNS to
+   `192.168.4.1` and redirects any URL to the page), so most phones show the
+   "sign in to network" sheet on connect. If yours doesn't, open
+   **`http://192.168.4.1/`** manually.
 3. The setup page scans for nearby networks — pick yours, enter the password,
    and **Save & connect**.
 4. Credentials are written to NVS and the device reboots and joins your network.
@@ -25,6 +29,9 @@ blank and provision at runtime:
 To change networks later, click **Reconfigure Wi-Fi** on the dashboard (or call
 `net_request_provisioning()`): it clears the saved credentials and reboots back
 into the setup portal.
+
+> The portal always listens on **port 80** (captive-portal detection only probes
+> port 80), regardless of the dashboard port below.
 
 ## Enable & configure
 
@@ -34,12 +41,14 @@ In `idf.py menuconfig` → **ESP.Resso**:
 - **Wi-Fi SSID / password** — *optional*; leave blank to use the setup portal
 - **Setup-portal AP name / password** — the `ESP-Resso-setup` AP defaults
 - **Dashboard HTTP port** (default 80)
+- **Use a static IP in station mode** — off = **DHCP** (default); on exposes
+  **IP / Gateway / Netmask / DNS** fields for a fixed address
 
 (Or edit the `CONFIG_ESPRESSO_*` defaults; see
 [`main/Kconfig.projbuild`](../main/Kconfig.projbuild).)
 
-Once joined, open `http://<device-ip>/` — the assigned IP is printed in
-`idf.py monitor`.
+Once joined, open `http://<device-ip>/` — with DHCP the assigned IP is printed
+in `idf.py monitor`; with a static IP it's the address you configured.
 
 ## What it serves
 
@@ -69,9 +78,8 @@ under the lock — the web layer never reaches into control state directly.
 - A **shot log** (time/volume/temperature curves) and charts.
 - **OTA** firmware updates (`esp_https_ota`) — the partition table already
   reserves two OTA app slots (see [`partitions.csv`](../partitions.csv)).
-- A **captive-portal DNS** responder (answer every lookup with 192.168.4.1) so
-  the setup page auto-opens when you join `ESP-Resso-setup`, instead of typing
-  the IP. The provisioning flow itself is already implemented above.
+- **mDNS** (`espresso.local`) so the dashboard has a stable name without needing
+  a static IP or hunting for the DHCP address.
 
 ## Security note
 
