@@ -19,17 +19,23 @@
 
 /* Idle (nothing pressed) is all-high, since inputs are active-low. */
 static uint8_t s_port = 0xFF;
+static bool s_ok; /* whether the last expander read/init succeeded */
 
 espresso_result_t hal_input_init(void)
 {
-    return pcf8574_init(PCF8574_I2C_ADDR) == ESP_OK ? ESPRESSO_OK
-                                                    : ESPRESSO_ERR_STATE;
+    s_ok = (pcf8574_init(PCF8574_I2C_ADDR) == ESP_OK);
+    return s_ok ? ESPRESSO_OK : ESPRESSO_ERR_STATE;
+}
+
+bool hal_input_ok(void)
+{
+    return s_ok;
 }
 
 /* Refresh the cached port snapshot; keep the last value on an I2C error. */
 static uint8_t read_port(void)
 {
-    pcf8574_read(&s_port);
+    s_ok = (pcf8574_read(&s_port) == ESP_OK);
     return s_port;
 }
 

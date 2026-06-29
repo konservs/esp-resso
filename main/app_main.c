@@ -11,6 +11,8 @@
 #include "nvs_flash.h"
 
 #include "hal/hal.h"
+#include "hal/hal_display.h"
+#include "hal/hal_input.h"
 #include "hal/hal_storage.h"
 
 static const char *TAG = "app";
@@ -35,12 +37,21 @@ void app_get_telemetry(app_telemetry_t *out)
     out->steam_setpoint = g_app.settings.steam_setpoint;
     out->brew_sensor_ok = g_app.brew_temp.ok;
     out->steam_sensor_ok = g_app.steam_temp.ok;
+    out->brew_temp_fault = g_app.brew_temp.fault;
+    out->steam_temp_fault = g_app.steam_temp.fault;
     out->brew_duty = g_app.brew_duty;
     out->steam_duty = g_app.steam_duty;
     out->both_ready = g_app.both_ready;
     out->shot_volume_ml = g_app.shot_volume_ml;
     out->shot_elapsed_ms = g_app.shot_elapsed_ms;
+    out->brew_level = g_app.brew_level;
+    out->steam_level = g_app.steam_level;
+    out->reservoir_ok = g_app.reservoir_present;
     xSemaphoreGive(g_app.lock);
+
+    /* Component health from the HAL (cached flags, no bus traffic). */
+    out->display_ok = hal_display_ok();
+    out->buttons_ok = hal_input_ok();
 }
 
 /* Load persisted settings, falling back to validated defaults. */

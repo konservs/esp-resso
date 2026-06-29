@@ -29,6 +29,9 @@ typedef struct {
 /** Initialise button GPIOs and control-switch inputs. */
 espresso_result_t hal_input_init(void);
 
+/** True if the input expander is responding (last I2C read succeeded). */
+bool hal_input_ok(void);
+
 /** Read the current debounced button states. */
 hal_buttons_t hal_buttons_read(void);
 

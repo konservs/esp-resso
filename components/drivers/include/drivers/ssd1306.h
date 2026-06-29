@@ -26,4 +26,7 @@ void ssd1306_draw_char(int x, int y, char c);
 void ssd1306_draw_text(int x, int y, const char *s);
 void ssd1306_flush(void);
 
+/** True if the last panel write over I2C succeeded (false => OLED not responding). */
+bool ssd1306_ok(void);
+
 #endif /* ESPRESSO_DRIVERS_SSD1306_H */

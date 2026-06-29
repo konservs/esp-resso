@@ -30,6 +30,15 @@ static void drain_events(app_state_t *app)
     }
 }
 
+/* Classify a boiler probe for the diagnostics view, mirroring the fill logic. */
+static level_status_t level_of(bool full, bool filling, bool reservoir_ok)
+{
+    if (full)          return LVL_FULL;
+    if (filling)       return LVL_FILLING;
+    if (!reservoir_ok) return LVL_ERROR; /* low but no water to fill from */
+    return LVL_LOW;                       /* low, fill held off (e.g. fault) */
+}
+
 void control_task(void *arg)
 {
     (void)arg;
@@ -96,6 +105,15 @@ void control_task(void *arg)
         app->brew_duty = brew_duty;
         app->steam_duty = steam_duty;
         app->both_ready = both_ready;
+
+        /* Auto-fill decision (reused to drive the valves below) + diagnostics. */
+        const bool can_fill = (state != MACHINE_FAULT) && reservoir_ok;
+        const bool brew_filling = can_fill && !brew_full;
+        const bool steam_filling = can_fill && !steam_full;
+        app->brew_level = level_of(brew_full, brew_filling, reservoir_ok);
+        app->steam_level = level_of(steam_full, steam_filling, reservoir_ok);
+        app->reservoir_present = reservoir_ok;
+
         prev_state = state;
         xSemaphoreGive(app->lock);
 
@@ -110,9 +128,8 @@ void control_task(void *arg)
 
         /* Boiler auto-fill: top up a boiler whose probe is uncovered, but only
          * when the reservoir has water and the machine is not faulted. */
-        const bool can_fill = (state != MACHINE_FAULT) && reservoir_ok;
-        hal_valve_set(HAL_VALVE_FILL_BREW, can_fill && !brew_full);
-        hal_valve_set(HAL_VALVE_FILL_STEAM, can_fill && !steam_full);
+        hal_valve_set(HAL_VALVE_FILL_BREW, brew_filling);
+        hal_valve_set(HAL_VALVE_FILL_STEAM, steam_filling);
 
         /* Report ready-state edges to the machine. */
         if (both_ready && !prev_ready) {

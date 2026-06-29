@@ -27,10 +27,13 @@ esp_err_t max31865_add(max31865_t *dev, spi_host_device_t host, int cs_gpio,
 
 /**
  * @brief Read and convert one temperature sample.
- * @param out_c Receives the temperature on success.
+ * @param out_c     Receives the temperature on success.
+ * @param out_fault Optional (may be NULL). On failure, receives the MAX31865
+ *                  fault-status byte (register 0x07 bitmask), or 0xFF if the SPI
+ *                  read itself failed (no chip / bus fault). 0 on success.
  * @return true on success; false if the chip reports an RTD fault (open/short).
  */
-bool max31865_read_celsius(max31865_t *dev, temp_c_t *out_c);
+bool max31865_read_celsius(max31865_t *dev, temp_c_t *out_c, uint8_t *out_fault);
 
 #ifdef __cplusplus
 }

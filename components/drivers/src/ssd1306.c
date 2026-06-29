@@ -13,6 +13,7 @@
 
 static i2c_master_dev_handle_t s_dev;
 static uint8_t s_fb[FB_SIZE];
+static bool s_ok; /* tracks whether the last panel write succeeded */
 
 static esp_err_t cmd(uint8_t c)
 {
@@ -126,5 +127,10 @@ void ssd1306_flush(void)
     static uint8_t out[1 + FB_SIZE];
     out[0] = 0x40; /* data stream */
     memcpy(&out[1], s_fb, FB_SIZE);
-    i2c_master_transmit(s_dev, out, sizeof(out), I2C_TIMEOUT_MS);
+    s_ok = (i2c_master_transmit(s_dev, out, sizeof(out), I2C_TIMEOUT_MS) == ESP_OK);
+}
+
+bool ssd1306_ok(void)
+{
+    return s_ok;
 }

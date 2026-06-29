@@ -20,6 +20,9 @@ extern "C" {
 /** Initialise the panel (I2C bus + SSD1306 init sequence). */
 espresso_result_t hal_display_init(void);
 
+/** True if the panel is responding (last write over I2C succeeded). */
+bool hal_display_ok(void);
+
 /** Panel geometry in pixels. */
 uint8_t hal_display_width(void);
 uint8_t hal_display_height(void);

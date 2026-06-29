@@ -7,7 +7,9 @@
 /* Register map (subset). */
 #define MAX31865_REG_CONFIG    0x00
 #define MAX31865_REG_RTD_MSB   0x01
+#define MAX31865_REG_FAULT     0x07
 #define MAX31865_WRITE_FLAG    0x80
+#define MAX31865_FAULT_CLEAR   0x02 /* config D1: clear the latched fault */
 
 /* Config: Vbias on, auto conversion, 3-wire off, 50 Hz filter.
  * TODO: expose 2/3/4-wire and 50/60 Hz selection if needed per machine. */
@@ -59,16 +61,30 @@ esp_err_t max31865_add(max31865_t *dev, spi_host_device_t host, int cs_gpio,
     return write_reg(dev, MAX31865_REG_CONFIG, MAX31865_CONFIG);
 }
 
-bool max31865_read_celsius(max31865_t *dev, temp_c_t *out_c)
+bool max31865_read_celsius(max31865_t *dev, temp_c_t *out_c, uint8_t *out_fault)
 {
+    if (out_fault != NULL) {
+        *out_fault = 0;
+    }
+
     uint8_t rtd[2] = { 0 };
     if (read_regs(dev, MAX31865_REG_RTD_MSB, rtd, sizeof(rtd)) != ESP_OK) {
+        if (out_fault != NULL) {
+            *out_fault = 0xFF; /* SPI/bus failure — distinct from an RTD fault */
+        }
         return false;
     }
 
     const uint16_t raw = (uint16_t)((rtd[0] << 8) | rtd[1]);
     if (raw & 0x0001) {
-        /* Bit 0 set => an RTD fault was detected. */
+        /* Bit 0 set => an RTD fault was detected; surface the detail and clear
+         * the latch so a transient fault can recover on the next read. */
+        if (out_fault != NULL) {
+            uint8_t f = 0;
+            read_regs(dev, MAX31865_REG_FAULT, &f, 1);
+            *out_fault = f;
+        }
+        write_reg(dev, MAX31865_REG_CONFIG, MAX31865_CONFIG | MAX31865_FAULT_CLEAR);
         return false;
     }
 

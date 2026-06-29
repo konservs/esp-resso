@@ -53,18 +53,24 @@ in `idf.py monitor`; with a static IP it's the address you configured.
 ## What it serves
 
 - **`/`** — a self-contained HTML page (no external assets) that polls telemetry
-  once per second and shows machine state, both boiler temperatures vs setpoints
-  with duty bars, fault status, and live shot time/volume.
+  once per second and shows a **component self-check**: display and button-expander
+  health, reservoir, and per-boiler temperature-sensor status (value + OK, or the
+  decoded MAX31865 fault) and water level (Full / Filling / Low / Error), plus
+  machine state and live shot time/volume.
 - **`/api/telemetry`** — a JSON snapshot:
 
   ```json
   {
     "state": "READY", "safety": "OK", "ready": true,
-    "brew":  { "t": 92.9, "sp": 93.0, "duty": 0.12, "ok": true },
-    "steam": { "t": 124.6, "sp": 125.0, "duty": 0.20, "ok": true },
+    "display": true, "buttons": true, "reservoir": true,
+    "brew":  { "t": 92.9,  "sp": 93.0,  "ok": true, "fault": 0, "level": 0 },
+    "steam": { "t": 124.6, "sp": 125.0, "ok": true, "fault": 0, "level": 0 },
     "shot":  { "ml": 0.0, "ms": 0 }
   }
   ```
+
+  `fault` is the MAX31865 fault byte when `ok` is false (`255` = no SPI comms);
+  `level` is `0`=Full, `1`=Filling, `2`=Low, `3`=Error.
 
 The data comes from `app_get_telemetry()`
 ([`main/app_main.c`](../main/app_main.c)), which copies a consistent snapshot

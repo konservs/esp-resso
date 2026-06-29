@@ -37,8 +37,8 @@ espresso_result_t hal_temp_init(void)
 
 hal_temp_reading_t hal_temp_read(hal_boiler_id_t boiler)
 {
-    hal_temp_reading_t r = { .celsius = 0.0f, .ok = false };
+    hal_temp_reading_t r = { .celsius = 0.0f, .ok = false, .fault = 0 };
     max31865_t *dev = (boiler == HAL_BOILER_STEAM) ? &s_steam : &s_brew;
-    r.ok = max31865_read_celsius(dev, &r.celsius);
+    r.ok = max31865_read_celsius(dev, &r.celsius, &r.fault);
     return r;
 }

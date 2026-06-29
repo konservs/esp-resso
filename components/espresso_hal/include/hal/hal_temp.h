@@ -15,6 +15,8 @@ extern "C" {
 typedef struct {
     temp_c_t celsius; /**< Converted temperature; meaningless if !ok.        */
     bool     ok;      /**< False on sensor open/short or out-of-range fault. */
+    uint8_t  fault;   /**< MAX31865 fault byte when !ok (0xFF = no SPI comms);
+                           0 when ok. See max31865.h. */
 } hal_temp_reading_t;
 
 /** Initialise the temperature front-end(s). */

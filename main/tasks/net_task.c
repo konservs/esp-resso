@@ -77,32 +77,47 @@ static const char DASHBOARD_HTML[] =
     "<!doctype html><html><head><meta charset='utf-8'>"
     "<meta name='viewport' content='width=device-width,initial-scale=1'>"
     "<title>ESP.Resso</title><style>"
-    "body{font-family:system-ui,sans-serif;background:#15110e;color:#eee;margin:0;padding:1.2rem}"
-    "h1{font-size:1.3rem;margin:0 0 1rem}.card{background:#241c16;border-radius:10px;padding:1rem;margin:.6rem 0}"
-    ".t{font-size:2.2rem;font-weight:600}.sp{color:#caa;font-size:1rem}"
-    ".bar{height:8px;background:#3a2e24;border-radius:4px;overflow:hidden;margin-top:.5rem}"
-    ".bar>i{display:block;height:100%;background:#e0892b}.k{color:#9a8}.row{display:flex;justify-content:space-between}"
+    "body{font-family:system-ui,sans-serif;background:#15110e;color:#eee;margin:0;padding:1.2rem;max-width:30rem}"
+    "h1{font-size:1.3rem;margin:0 0 1rem}"
+    ".card{background:#241c16;border-radius:10px;padding:.7rem 1rem;margin:.6rem 0}"
+    ".hd{color:#e0892b;font-weight:600;margin-bottom:.3rem}"
+    ".row{display:flex;justify-content:space-between;align-items:baseline;padding:.18rem 0}"
+    ".k{color:#9a8}.st{font-weight:600}"
+    ".ok{color:#7cd97c}.warn{color:#e0b02b}.err{color:#e0552b}"
     "#state{font-weight:600;color:#e0892b}"
     "button{background:#3a2e24;color:#caa;border:0;border-radius:8px;padding:.5rem .8rem;font-size:.85rem}"
     "</style></head><body>"
     "<h1>ESP.Resso &middot; <span id='state'>...</span></h1>"
-    "<div class='card'><div class='row'><span class='k'>Brew boiler</span><span id='bok'></span></div>"
-    "<div class='t'><span id='bt'>--</span>&deg;C <span class='sp'>/ <span id='bsp'>--</span></span></div>"
-    "<div class='bar'><i id='bd' style='width:0'></i></div></div>"
-    "<div class='card'><div class='row'><span class='k'>Steam boiler</span><span id='sok'></span></div>"
-    "<div class='t'><span id='st'>--</span>&deg;C <span class='sp'>/ <span id='ssp'>--</span></span></div>"
-    "<div class='bar'><i id='sd' style='width:0'></i></div></div>"
-    "<div class='card'><div class='row'><span class='k'>Shot</span><span id='shot'>--</span></div></div>"
+    "<div class='card'>"
+    "<div class='row'><span class='k'>Display</span><span id='disp' class='st'>--</span></div>"
+    "<div class='row'><span class='k'>Buttons</span><span id='btns' class='st'>--</span></div>"
+    "<div class='row'><span class='k'>Reservoir</span><span id='res' class='st'>--</span></div>"
+    "</div>"
+    "<div class='card'><div class='hd'>Brew boiler</div>"
+    "<div class='row'><span class='k'>Temp sensor</span><span id='bt' class='st'>--</span></div>"
+    "<div class='row'><span class='k'>Water level</span><span id='bl' class='st'>--</span></div>"
+    "</div>"
+    "<div class='card'><div class='hd'>Steam boiler</div>"
+    "<div class='row'><span class='k'>Temp sensor</span><span id='stt' class='st'>--</span></div>"
+    "<div class='row'><span class='k'>Water level</span><span id='sl' class='st'>--</span></div>"
+    "</div>"
+    "<div class='card'><div class='row'><span class='k'>Shot</span><span id='shot' class='st'>--</span></div></div>"
     "<div class='card'><button onclick='forget()'>Reconfigure Wi-Fi</button></div>"
     "<script>"
     "function g(id){return document.getElementById(id)}"
+    "var LVL=['Full','Filling','Low','Error'],LC=['ok','warn','warn','err'];"
+    "function setOk(el,b){el.textContent=b?'OK':'FAULT';el.className='st '+(b?'ok':'err')}"
+    "function faultText(f){if(f===255)return 'no SPI comms';if(f&192)return 'out of range';"
+    "if(f&56)return 'open circuit';if(f&4)return 'voltage fault';return 'fault 0x'+f.toString(16)}"
+    "function setTemp(el,o){if(o.ok){el.textContent=o.t.toFixed(1)+'\\u00B0C  OK';el.className='st ok'}"
+    "else{var d=faultText(o.fault);el.textContent='FAIL'+(d?' \\u2014 '+d:'');el.className='st err'}}"
+    "function setLevel(el,v){el.textContent=LVL[v]||'?';el.className='st '+(LC[v]||'warn')}"
     "async function tick(){try{const d=await(await fetch('/api/telemetry')).json();"
     "g('state').textContent=d.safety==='OK'?d.state:('FAULT: '+d.safety);"
-    "g('bt').textContent=d.brew.t.toFixed(1);g('bsp').textContent=d.brew.sp.toFixed(1);"
-    "g('bd').style.width=(d.brew.duty*100)+'%';g('bok').textContent=d.brew.ok?'':'SENSOR FAULT';"
-    "g('st').textContent=d.steam.t.toFixed(1);g('ssp').textContent=d.steam.sp.toFixed(1);"
-    "g('sd').style.width=(d.steam.duty*100)+'%';g('sok').textContent=d.steam.ok?'':'SENSOR FAULT';"
-    "g('shot').textContent=(d.shot.ms/1000).toFixed(1)+'s / '+d.shot.ml.toFixed(0)+'ml';"
+    "setOk(g('disp'),d.display);setOk(g('btns'),d.buttons);setOk(g('res'),d.reservoir);"
+    "setTemp(g('bt'),d.brew);setLevel(g('bl'),d.brew.level);"
+    "setTemp(g('stt'),d.steam);setLevel(g('sl'),d.steam.level);"
+    "g('shot').className='st';g('shot').textContent=(d.shot.ms/1000).toFixed(1)+'s / '+d.shot.ml.toFixed(0)+'ml';"
     "}catch(e){g('state').textContent='offline'}}"
     "async function forget(){if(!confirm('Forget Wi-Fi and reboot into setup mode?'))return;"
     "await fetch('/api/forget',{method:'POST'});"
@@ -257,19 +272,24 @@ static esp_err_t telemetry_get(httpd_req_t *req)
     app_telemetry_t t;
     app_get_telemetry(&t);
 
-    char buf[384];
+    char buf[512];
     const int n = snprintf(
         buf, sizeof(buf),
         "{\"state\":\"%s\",\"safety\":\"%s\",\"ready\":%s,"
-        "\"brew\":{\"t\":%.1f,\"sp\":%.1f,\"duty\":%.2f,\"ok\":%s},"
-        "\"steam\":{\"t\":%.1f,\"sp\":%.1f,\"duty\":%.2f,\"ok\":%s},"
+        "\"display\":%s,\"buttons\":%s,\"reservoir\":%s,"
+        "\"brew\":{\"t\":%.1f,\"sp\":%.1f,\"ok\":%s,\"fault\":%u,\"level\":%d},"
+        "\"steam\":{\"t\":%.1f,\"sp\":%.1f,\"ok\":%s,\"fault\":%u,\"level\":%d},"
         "\"shot\":{\"ml\":%.1f,\"ms\":%lu}}",
         machine_state_name(t.state), safety_trip_name(t.safety_trip),
         t.both_ready ? "true" : "false",
-        (double)t.brew_temp, (double)t.brew_setpoint, (double)t.brew_duty,
+        t.display_ok ? "true" : "false", t.buttons_ok ? "true" : "false",
+        t.reservoir_ok ? "true" : "false",
+        (double)t.brew_temp, (double)t.brew_setpoint,
         t.brew_sensor_ok ? "true" : "false",
-        (double)t.steam_temp, (double)t.steam_setpoint, (double)t.steam_duty,
+        (unsigned)t.brew_temp_fault, (int)t.brew_level,
+        (double)t.steam_temp, (double)t.steam_setpoint,
         t.steam_sensor_ok ? "true" : "false",
+        (unsigned)t.steam_temp_fault, (int)t.steam_level,
         (double)t.shot_volume_ml, (unsigned long)t.shot_elapsed_ms);
 
     httpd_resp_set_type(req, "application/json");

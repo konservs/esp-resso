@@ -21,6 +21,14 @@
 #include "core/state_machine.h"
 #include "hal/hal_temp.h"
 
+/** Water-level status for a boiler, for the diagnostics view. */
+typedef enum {
+    LVL_FULL = 0,  /**< Probe covered.                               */
+    LVL_FILLING,   /**< Uncovered and the fill valve is open.        */
+    LVL_LOW,       /**< Uncovered, fill held off (e.g. machine fault). */
+    LVL_ERROR      /**< Uncovered but the reservoir is empty.        */
+} level_status_t;
+
 /** Control-loop period. Boiler PIDs and the brew controller run at this rate. */
 #define CONTROL_PERIOD_MS 100
 /** Safety supervisor period (runs faster, at higher priority). */
@@ -46,6 +54,11 @@ typedef struct {
     uint32_t shot_elapsed_ms;
     bool     both_ready;
 
+    /* Water-level diagnostics published by the control task. */
+    level_status_t brew_level;
+    level_status_t steam_level;
+    bool     reservoir_present;
+
     SemaphoreHandle_t lock;   /**< Guards this struct.               */
     QueueHandle_t     events; /**< machine_event_t produced by tasks. */
 } app_state_t;
@@ -63,11 +76,20 @@ typedef struct {
     temp_c_t steam_setpoint;
     bool     brew_sensor_ok;
     bool     steam_sensor_ok;
+    uint8_t  brew_temp_fault;  /**< MAX31865 fault byte when !brew_sensor_ok.  */
+    uint8_t  steam_temp_fault; /**< MAX31865 fault byte when !steam_sensor_ok. */
     float    brew_duty;
     float    steam_duty;
     bool     both_ready;
     float    shot_volume_ml;
     uint32_t shot_elapsed_ms;
+
+    /* Component self-check for the diagnostics view. */
+    bool           display_ok;
+    bool           buttons_ok;
+    level_status_t brew_level;
+    level_status_t steam_level;
+    bool           reservoir_ok;
 } app_telemetry_t;
 
 /** Post a machine event from any task/ISR-safe context. */

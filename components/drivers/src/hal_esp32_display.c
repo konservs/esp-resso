@@ -17,6 +17,8 @@ espresso_result_t hal_display_init(void)
                : ESPRESSO_ERR_STATE;
 }
 
+bool hal_display_ok(void) { return ssd1306_ok(); }
+
 uint8_t hal_display_width(void)  { return SSD1306_WIDTH; }
 uint8_t hal_display_height(void) { return SSD1306_HEIGHT; }
 
