@@ -7,6 +7,8 @@ idf_component_register(
         "tasks/net_task.c"
     INCLUDE_DIRS
         "include"
+    EMBED_FILES
+        "favicon.ico"
     REQUIRES
         core
         espresso_hal

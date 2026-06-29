@@ -62,6 +62,10 @@ static const char *TAG = "net";
 #define PORTAL_PORT    80       /* Captive detection only probes port 80.        */
 #define CAPTIVE_IP     "192.168.4.1" /* Default SoftAP gateway address.          */
 
+/* favicon.ico, embedded into the binary via EMBED_FILES in main/CMakeLists.txt. */
+extern const uint8_t favicon_start[] asm("_binary_favicon_ico_start");
+extern const uint8_t favicon_end[]   asm("_binary_favicon_ico_end");
+
 /* Persisted (and posted) credentials. Fixed size so the NVS blob length is
  * stable — hal_storage_load requires an exact size match. */
 typedef struct {
@@ -76,7 +80,7 @@ typedef struct {
 static const char DASHBOARD_HTML[] =
     "<!doctype html><html><head><meta charset='utf-8'>"
     "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-    "<title>ESP.Resso</title><style>"
+    "<title>ESP.Resso</title><link rel='icon' href='/favicon.ico'><style>"
     "body{font-family:system-ui,sans-serif;background:#15110e;color:#eee;margin:0;padding:1.2rem;max-width:30rem}"
     "h1{font-size:1.3rem;margin:0 0 1rem}"
     ".card{background:#241c16;border-radius:10px;padding:.7rem 1rem;margin:.6rem 0}"
@@ -129,7 +133,7 @@ static const char DASHBOARD_HTML[] =
 static const char SETUP_HTML[] =
     "<!doctype html><html><head><meta charset='utf-8'>"
     "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-    "<title>ESP.Resso setup</title><style>"
+    "<title>ESP.Resso setup</title><link rel='icon' href='/favicon.ico'><style>"
     "body{font-family:system-ui,sans-serif;background:#15110e;color:#eee;margin:0;padding:1.2rem;max-width:28rem}"
     "h1{font-size:1.3rem}label{display:block;margin:.8rem 0 .2rem;color:#9a8}"
     "input,select,button{width:100%;box-sizing:border-box;padding:.6rem;border-radius:8px;border:1px solid #3a2e24;"
@@ -265,6 +269,15 @@ static esp_err_t root_get(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "text/html");
     return httpd_resp_send(req, DASHBOARD_HTML, HTTPD_RESP_USE_STRLEN);
+}
+
+/* Embedded favicon, served in both station and portal modes. */
+static esp_err_t favicon_get(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "image/x-icon");
+    httpd_resp_set_hdr(req, "Cache-Control", "max-age=86400");
+    return httpd_resp_send(req, (const char *)favicon_start,
+                           favicon_end - favicon_start);
 }
 
 static esp_err_t telemetry_get(httpd_req_t *req)
@@ -530,6 +543,7 @@ static void start_dashboard(void)
 {
     server_start(CONFIG_ESPRESSO_DASHBOARD_PORT);
     register_uri("/", HTTP_GET, root_get);
+    register_uri("/favicon.ico", HTTP_GET, favicon_get);
     register_uri("/api/telemetry", HTTP_GET, telemetry_get);
     register_uri("/api/forget", HTTP_POST, forget_post);
     ESP_LOGI(TAG, "dashboard listening on port %d", CONFIG_ESPRESSO_DASHBOARD_PORT);
@@ -539,6 +553,7 @@ static void start_portal_server(void)
 {
     server_start(PORTAL_PORT); /* captive detection only checks port 80 */
     register_uri("/", HTTP_GET, setup_get);
+    register_uri("/favicon.ico", HTTP_GET, favicon_get);
     register_uri("/api/scan", HTTP_GET, scan_get);
     register_uri("/api/provision", HTTP_POST, provision_post);
     /* Anything else (the OS connectivity-check URL) -> redirect to the page. */
