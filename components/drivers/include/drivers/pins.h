@@ -26,9 +26,16 @@
 #define SSD1306_I2C_ADDR  0x3C
 #define PCF8574_I2C_ADDR  0x20  /* A2..A0 = GND; 0x38 for a PCF8574A part */
 
-/* --- Heaters (solid-state relays, active-high via ULN2003 buffer) --------- */
-#define PIN_SSR_BREW      25
-#define PIN_SSR_STEAM     26
+/* --- Heaters: two elements per boiler (lower + upper), each on its own -----
+ * zero-cross SSR, active-high via the ULN2003 buffer. Both elements of a boiler
+ * follow the same PID duty (mirrored) today — see hal_esp32_actuators.c. Fit a
+ * ~10 kOhm pulldown on every ULN2003 heater input so the elements stay OFF
+ * through the boot window; GPIO14 especially idles with a weak INTERNAL PULL-UP
+ * at reset, so its external pulldown is mandatory to not energise a heater. */
+#define PIN_SSR_BREW_LO   25
+#define PIN_SSR_BREW_HI   33
+#define PIN_SSR_STEAM_LO  26
+#define PIN_SSR_STEAM_HI  14
 
 /* --- Pump (SSR) and auto-fill valves (relays), active-high via ULN2003 ---- */
 /* The E61 group's 3-way valve is mechanical (lever-actuated) — no GPIO. */
@@ -39,16 +46,21 @@
 /* --- Flow meter (pulse input) --------------------------------------------- */
 #define PIN_FLOW_PULSE    34  /* input-only; external pull-up required */
 
-/* --- Water-level sensing (isolated H-bridge AC; see docs/level-sensing.md) - */
-/* Two pins drive an opto-isolated H-bridge on a FLOATING 12 V rail that applies */
-/* symmetric AC across each probe and the boiler shell (zero net DC -> no       */
-/* electrolysis). Conduction (wet) lights a per-probe AC optocoupler read as a  */
-/* digital input. The cold reservoir uses a simple float switch.               */
-#define PIN_LEVEL_EXC_A      14  /* H-bridge input A (anti-phase)             */
-#define PIN_LEVEL_EXC_B       2  /* H-bridge input B; strapping/LED pin, but  */
-                                 /*   the opto sinks to GND so it idles low   */
-#define PIN_LEVEL_BREW       35  /* brew sense (opto output, digital)         */
-#define PIN_LEVEL_STEAM      36  /* steam sense (opto output, digital)        */
+/* --- Water-level sensing (isolated bipolar ±12 V; see docs/level-sensing.md) */
+/* Three control lines feed a 74HC139 decoder (MCU side) whose four outputs     */
+/* each drive one opto whose transistor switches a rod to ±12 V. The decoder    */
+/* asserts only ONE output, so exactly one boiler rod is energised and P/N can  */
+/* never conflict (hardware shoot-through interlock). A 74HC157 (SELECT) routes  */
+/* the active boiler's POS/NEG conduction optos to two MCU inputs. The cold     */
+/* reservoir uses a simple float switch.                                        */
+/*   SELECT : 0 = brew, 1 = steam (also selects the 74HC157 sense mux)          */
+/*   ENABLE : 74HC139 active-low enable (LOW = drive on, HIGH = idle)           */
+/*   REVERSE: 0 = rod +12 V (sense POS), 1 = rod -12 V (sense NEG)              */
+#define PIN_LEVEL_SELECT     16  /* boiler select -> 139 A1 + 157 sel          */
+#define PIN_LEVEL_ENABLE     17  /* drive enable  -> 139 EN (active-low)       */
+#define PIN_LEVEL_REVERSE    32  /* polarity      -> 139 A0                    */
+#define PIN_LEVEL_SENSE_POS  35  /* + conduction (157 out; input-only)        */
+#define PIN_LEVEL_SENSE_NEG  36  /* - conduction (157 out; input-only)        */
 #define PIN_LEVEL_RESERVOIR  39  /* float switch (input-only, ext. pull-up)   */
 
 /* --- UI buttons + machine switches: PCF8574 expander bits (active-low) ----- */
@@ -61,10 +73,10 @@
 #define EXP_SWITCH_STEAM   3  /* P3: steam knob microswitch     */
 /* P4..P7: free for future buttons.                                            */
 
-/* --- Freed native GPIOs (were buttons/switches) --------------------------- */
-/* GPIO 13, 14, 15 are JTAG TCK/TMS/TDO and 12 is TDI. Relocating the brew fill
- * valve (13), level H-bridge A (14) and steam RTD CS (15) onto the now-free
- * 16/17/32/33 lets all four JTAG lines be wired. That reshuffle is a separate
- * step; for now 16/17/32/33 are simply unassigned. */
+/* --- Freed / spare native GPIOs ------------------------------------------- */
+/* GPIO 33 and the freed GPIO 14 now drive the two upper heater-element SSRs;
+ * 16/17/32 carry the level control lines. That leaves GPIO 2 (the other freed
+ * level-drive pin) as the only spare — and it is a strapping pin, so reserve it
+ * for a non-critical output at most. (JTAG is not wired; see docs/hardware.md.) */
 
 #endif /* ESPRESSO_DRIVERS_PINS_H */

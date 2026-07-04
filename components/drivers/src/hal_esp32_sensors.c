@@ -64,56 +64,82 @@ void hal_flow_reset(void)
 }
 
 /* -------------------------------------------------------------------------- */
-/* Water level - isolated H-bridge AC conductivity sensing.                    */
+/* Water level - isolated bipolar (±12 V) conductivity sensing.                */
 /* See docs/level-sensing.md.                                                  */
 /*                                                                            */
-/* Two pins drive an opto-isolated H-bridge (floating 12 V) anti-phase, so the */
-/* probe sees symmetric AC across probe<->shell with zero net DC (no           */
-/* electrolysis). When water conducts, a per-probe AC optocoupler asserts a    */
-/* DIGITAL sense input. Sensing is pulsed: a short anti-phase burst per read,  */
-/* then both drive pins idle low. EXC_A and EXC_B are NEVER both high (that    */
-/* would short the bridge) - prefer a driver IC with dead-time as well.        */
+/* SELECT/ENABLE/REVERSE feed a 74HC139 decoder (MCU side); its four outputs    */
+/* each light an opto that switches a rod to ±12 V - so only ONE rod is ever    */
+/* energised and P/N can never conflict (hardware interlock). The selected rod  */
+/* is pushed to +12 V then -12 V vs. the earthed body (zero net DC); a per-     */
+/* boiler, per-direction opto reports conduction, and a 74HC157 (SELECT) routes */
+/* the active boiler's POS/NEG optos onto two MCU inputs. Real water conducts   */
+/* on BOTH directions in step with the drive, so we require both - and probe at */
+/* two frequencies to reject fixed-frequency pump/heater/mains noise. Sensing   */
+/* is pulsed (drive idled between reads).                                       */
 /* -------------------------------------------------------------------------- */
 
-#define LEVEL_EXC_CYCLES   8     /* anti-phase cycles per read            */
-#define LEVEL_SETTLE_US    200   /* opto + 12 V side settle before sample  */
-/* Of the 2*LEVEL_EXC_CYCLES half-cycle samples, this many "conducting"
- * readings mean WET. Calibrate on the bench. */
-#define LEVEL_WET_MIN_HITS 6
+/* 74HC139 enable is active-low: LOW enables the decoder (exactly one switch on),
+ * HIGH forces all switches off. A pull-up on this line keeps the drive disabled
+ * at boot, before hal_level_init() runs. */
+#define LEVEL_DRIVE_ENABLE  0
+#define LEVEL_DRIVE_IDLE    1
 
-/* Sense input GPIO for a boiler probe (opto-coupler output). */
-static int sense_gpio(hal_level_id_t id)
-{
-    switch (id) {
-    case HAL_LEVEL_BREW:  return PIN_LEVEL_BREW;
-    case HAL_LEVEL_STEAM: return PIN_LEVEL_STEAM;
-    default:              return -1;
-    }
-}
+/* SELECT value per boiler (also selects the 74HC157 sense mux channel). */
+#define LEVEL_SELECT_BREW   0
+#define LEVEL_SELECT_STEAM  1
 
-/* Opto output is active-low (its transistor pulls the pulled-up input to GND
- * while the water conducts). Invert here if your optocoupler wiring differs. */
-static bool conducting(int gpio)
+/* REVERSE value per polarity. 0 -> rod +12 V (read SENSE_POS); 1 -> -12 V (NEG). */
+#define LEVEL_POS           0
+#define LEVEL_NEG           1
+
+#define LEVEL_CYCLES        4    /* +/- pairs per burst                        */
+#define LEVEL_WET_MIN_HITS  3    /* of LEVEL_CYCLES, per direction => that dir wet */
+#define LEVEL_DWELL_FAST_US 250  /* ~1.7 kHz probe (also = opto/settle time)   */
+#define LEVEL_DWELL_SLOW_US 600  /* ~0.8 kHz probe (second frequency)          */
+#define LEVEL_GAP_US        50   /* idle gap between polarity flips            */
+
+/* Sense opto output is active-low (its transistor pulls the pulled-up MCU input
+ * to GND while the water conducts). Invert here if your wiring differs. */
+static inline bool level_conducting(int gpio)
 {
     return gpio_get_level(gpio) == 0;
 }
 
+static void level_idle(void)
+{
+    gpio_set_level(PIN_LEVEL_ENABLE, LEVEL_DRIVE_IDLE);
+}
+
+/* Energise the selected rod at one polarity. Idle first so SELECT/REVERSE settle
+ * with all switches off (break-before-make); the decoder then enables exactly
+ * one switch. */
+static void level_drive(int select, int reverse)
+{
+    gpio_set_level(PIN_LEVEL_ENABLE, LEVEL_DRIVE_IDLE);
+    gpio_set_level(PIN_LEVEL_SELECT, select);
+    gpio_set_level(PIN_LEVEL_REVERSE, reverse);
+    gpio_set_level(PIN_LEVEL_ENABLE, LEVEL_DRIVE_ENABLE);
+}
+
 espresso_result_t hal_level_init(void)
 {
-    /* H-bridge inputs, both idle low (bridge off). */
-    gpio_config_t exc = {
-        .pin_bit_mask = (1ULL << PIN_LEVEL_EXC_A) | (1ULL << PIN_LEVEL_EXC_B),
+    /* Control outputs: SELECT / ENABLE / REVERSE. Start idle (drive disabled). */
+    gpio_config_t drv = {
+        .pin_bit_mask = (1ULL << PIN_LEVEL_SELECT) | (1ULL << PIN_LEVEL_ENABLE) |
+                        (1ULL << PIN_LEVEL_REVERSE),
         .mode = GPIO_MODE_OUTPUT,
     };
-    gpio_config(&exc);
-    gpio_set_level(PIN_LEVEL_EXC_A, 0);
-    gpio_set_level(PIN_LEVEL_EXC_B, 0);
+    gpio_config(&drv);
+    gpio_set_level(PIN_LEVEL_ENABLE, LEVEL_DRIVE_IDLE);
+    gpio_set_level(PIN_LEVEL_SELECT, LEVEL_SELECT_BREW);
+    gpio_set_level(PIN_LEVEL_REVERSE, LEVEL_POS);
 
-    /* Sense + reservoir inputs. These need EXTERNAL pull-ups (GPIO35/36/39 are
-     * input-only with no internal pulls); the opto output / float switch pull
-     * the line to GND when active. */
+    /* Sense + reservoir inputs. GPIO35/36/39 are input-only with no internal
+     * pulls; external pull-ups on the sense-mux outputs / float switch pull the
+     * line to GND when active. */
     gpio_config_t in = {
-        .pin_bit_mask = (1ULL << PIN_LEVEL_BREW) | (1ULL << PIN_LEVEL_STEAM) |
+        .pin_bit_mask = (1ULL << PIN_LEVEL_SENSE_POS) |
+                        (1ULL << PIN_LEVEL_SENSE_NEG) |
                         (1ULL << PIN_LEVEL_RESERVOIR),
         .mode = GPIO_MODE_INPUT,
     };
@@ -121,30 +147,30 @@ espresso_result_t hal_level_init(void)
     return ESPRESSO_OK;
 }
 
-/* Run an anti-phase burst and count conducting half-cycles. */
-static int count_conducting(int sense)
+/* One burst at a given dwell (excitation frequency): alternate +/-, counting the
+ * conducting half-cycles per direction. Leaves the drive idle. */
+static void level_burst(int select, int dwell_us, int *pos_hits, int *neg_hits)
 {
-    int hits = 0;
-    for (int i = 0; i < LEVEL_EXC_CYCLES; i++) {
-        /* Phase +: A high, B low (drop B first to avoid overlap). */
-        gpio_set_level(PIN_LEVEL_EXC_B, 0);
-        gpio_set_level(PIN_LEVEL_EXC_A, 1);
-        esp_rom_delay_us(LEVEL_SETTLE_US);
-        if (conducting(sense)) {
-            hits++;
+    int ph = 0, nh = 0;
+    for (int i = 0; i < LEVEL_CYCLES; i++) {
+        level_drive(select, LEVEL_POS);
+        esp_rom_delay_us(dwell_us);
+        if (level_conducting(PIN_LEVEL_SENSE_POS)) {
+            ph++;
         }
-        /* Phase -: B high, A low. */
-        gpio_set_level(PIN_LEVEL_EXC_A, 0);
-        gpio_set_level(PIN_LEVEL_EXC_B, 1);
-        esp_rom_delay_us(LEVEL_SETTLE_US);
-        if (conducting(sense)) {
-            hits++;
+        level_idle();
+        esp_rom_delay_us(LEVEL_GAP_US);
+
+        level_drive(select, LEVEL_NEG);
+        esp_rom_delay_us(dwell_us);
+        if (level_conducting(PIN_LEVEL_SENSE_NEG)) {
+            nh++;
         }
+        level_idle();
+        esp_rom_delay_us(LEVEL_GAP_US);
     }
-    /* Idle the bridge (both low) - pulsed sensing. */
-    gpio_set_level(PIN_LEVEL_EXC_A, 0);
-    gpio_set_level(PIN_LEVEL_EXC_B, 0);
-    return hits;
+    *pos_hits = ph;
+    *neg_hits = nh;
 }
 
 bool hal_level_present(hal_level_id_t level)
@@ -155,9 +181,23 @@ bool hal_level_present(hal_level_id_t level)
         return gpio_get_level(PIN_LEVEL_RESERVOIR) == 0;
     }
 
-    const int sense = sense_gpio(level);
-    if (sense < 0) {
+    int select;
+    switch (level) {
+    case HAL_LEVEL_BREW:  select = LEVEL_SELECT_BREW;  break;
+    case HAL_LEVEL_STEAM: select = LEVEL_SELECT_STEAM; break;
+    default:
         return true; /* unknown probe: fail safe against overfilling */
     }
-    return count_conducting(sense) >= LEVEL_WET_MIN_HITS;
+
+    /* Probe at two frequencies; require BOTH directions to conduct at BOTH.
+     * Genuine water passes all four counts; one-directional leakage or a
+     * fixed-frequency machine noise source does not. Relax to a single burst /
+     * one direction here if bench calibration shows this is too strict. */
+    int pf, nf, ps, ns;
+    level_burst(select, LEVEL_DWELL_FAST_US, &pf, &nf);
+    level_burst(select, LEVEL_DWELL_SLOW_US, &ps, &ns);
+    level_idle();
+
+    return pf >= LEVEL_WET_MIN_HITS && nf >= LEVEL_WET_MIN_HITS &&
+           ps >= LEVEL_WET_MIN_HITS && ns >= LEVEL_WET_MIN_HITS;
 }

@@ -20,21 +20,22 @@ A dual-boiler E61 machine:
 | 1 | ESP32 dev module (WROOM-32) | Dual-core, classic ESP32 |
 | 2 | MAX31865 RTD amplifier | One per boiler; 430 Ω reference for PT100 |
 | 2 | PT100 RTD probe | M4/M5 threaded or clamp, boiler temperature |
-| 2 | Solid-state relay (zero-cross) | Boiler heaters (slow-PWM); DC-input, driven at 12 V via the ULN2003 |
+| 4 | Solid-state relay (zero-cross) | Boiler heaters — **two per boiler** (lower + upper element), slow-PWM; DC-input, driven at 12 V via the ULN2003 |
 | 1 | Pump + zero-cross SSR | Vibratory or rotary; size the SSR for motor inrush (rotary), zero-cross enables pulse-skip flow (vibratory) |
 | 2 | Mains solenoid valve (230/120 VAC) | Brew / steam auto-fill inlets; OEM Olab type (e.g. Profitec US1005) |
 | 2 | 12 V relay (PCB, ≥ 250 VAC) | Switch each fill solenoid; optional RC/MOV across contacts |
-| 1 | ULN2003A Darlington array | One low-side buffer for all actuators: 3 SSR inputs (heaters + pump) + 2 relay coils; COM→+12 V flyback |
+| 1 | ULN2003A Darlington array | One low-side buffer for all actuators: 5 SSR inputs (4 heater elements + pump) + 2 relay coils = all 7 channels; COM→+12 V flyback |
 | 1 | Flow meter (Hall, e.g. digmesa/gicar) | Volumetric dosing |
 | 2 | Conductivity level probe | Brew + steam boilers (isolated AC-sensed) |
 | 1 | Float switch | Reservoir low-water (reed/magnet) |
 | 1 | 12 V DC PSU (≥ 1 A) | Main supply; logic + sensing + relay coils (fill valves are mains, relay-switched) — see [power.md](power.md) |
 | 1 | Buck regulator 12→5 V | e.g. AP63205 / MP1584 — efficient bulk drop |
 | 1 | LDO 5→3.3 V | e.g. AP2112K-3.3 — low-noise rail for ESP32 + RTDs |
-| 1 | Isolated 12→12 V DC-DC | Floating **+12VA** / **GNDA** rail for the sensing H-bridge (separate ground) |
-| 1 | H-bridge (driver IC or 4 transistors) | Anti-phase AC excitation |
-| 4 | Optocoupler | 2× control (ESP32→bridge), 2× AC-input sense (per probe) |
-| — | Current-limit resistors | ~4.7 kΩ per probe (≈1–2 mA); see level-sensing.md |
+| 1 | Isolated dual ±12 V DC-DC | e.g. Murata NMA1212 — **+12VA / GNDA / −12VA** for sensing (separate ground) |
+| 1 | 74HC139 decoder | SELECT/ENABLE/REVERSE → 4 switch drives + shoot-through interlock (MCU side) |
+| 1 | 74HC157 mux | SELECT routes active boiler's POS/NEG sense → 2 MCU pins (MCU side) |
+| 8 | Optocoupler (PC817, V(CEO) ≥ 24 V) | 4× drive — decoder out, the opto *is* the ±12VA switch (no MOSFET) — + 4× sense (per boiler, per direction) |
+| — | Current-limit resistors | ~4.7 kΩ per boiler (≈1–2 mA); see level-sensing.md |
 | 1 | SSD1306 OLED, 128×64, I2C | Status display, address 0x3C |
 | 1 | PCF8574 I2C expander | All buttons + switches (address 0x20); frees JTAG pins |
 | 2 | Momentary push button | UI (A = −/left, B = +/right), to PCF8574 P0/P1 |
@@ -55,24 +56,27 @@ Change wiring there.
 | RTD steam CS | 15 | Strapping pin, but CS idles high → boot-safe |
 | I2C SDA | 21 | Shared: SSD1306 + PCF8574 |
 | I2C SCL | 22 | Shared: SSD1306 + PCF8574 |
-| SSR brew | 25 | Active-high → ULN2003 → heater SSR |
-| SSR steam | 26 | Active-high → ULN2003 → heater SSR |
+| SSR brew low | 25 | Active-high → ULN2003 → brew lower-element SSR |
+| SSR brew high | 33 | Active-high → ULN2003 → brew upper-element SSR |
+| SSR steam low | 26 | Active-high → ULN2003 → steam lower-element SSR |
+| SSR steam high | 14 | Active-high → ULN2003 → steam upper-element SSR; **ext. pulldown** (GPIO14 idles pulled-up at reset → heater off at boot) |
 | Pump | 27 | Active-high → ULN2003 → pump SSR |
 | Fill valve (brew) | 13 | Active-high → ULN2003 → fill relay |
 | Fill valve (steam) | 4 | Active-high → ULN2003 → fill relay |
 | Flow meter | 34 | **Input-only**, needs external pull-up |
-| Level H-bridge in A | 14 | Opto-isolated H-bridge drive (anti-phase) |
-| Level H-bridge in B | 2 | Anti-phase pair; strapping/LED pin (idles low) |
-| Level sense — brew | 35 | **Input-only**, optocoupler output (digital) |
-| Level sense — steam | 36 | **Input-only**, optocoupler output (digital) |
+| Level SELECT | 16 | boiler select → 74HC139 A1 + 74HC157 sel |
+| Level ENABLE | 17 | drive enable → 74HC139 Ē (active-low; idle-off at boot) |
+| Level REVERSE | 32 | polarity → 74HC139 A0 |
+| Level sense + | 35 | **Input-only**, 74HC157 out (POS opto) |
+| Level sense − | 36 | **Input-only**, 74HC157 out (NEG opto) |
 | Level — reservoir | 39 | **Input-only**, float switch, external pull-up |
 
 The UI buttons (A/B) and machine switches (brew lever, steam knob) are **not**
-on native GPIOs — they hang off the PCF8574 I2C expander (below). This frees
-**GPIO 16, 17, 32, 33**, which are currently unassigned and reserved for the
-JTAG reshuffle (relocating the brew fill valve, level H-bridge A, and steam RTD
-CS off GPIO 13/14/15 so all four JTAG lines — TDI 12, TCK 13, TMS 14, TDO 15 —
-can be wired).
+on native GPIOs — they hang off the PCF8574 I2C expander (below), which freed up
+native pins. **GPIO 16/17/32** now carry the level control lines
+(SELECT/ENABLE/REVERSE); **GPIO 33** and the freed **GPIO 14** now drive the two
+upper heater-element SSRs, leaving **GPIO 2** (a strapping pin) as the only spare. (JTAG is not wired — see
+[level-sensing.md](level-sensing.md).)
 
 ### I2C input expander (PCF8574, address 0x20)
 
@@ -96,6 +100,10 @@ For more than 8 inputs, add a second expander at a different address.
   add external pull-ups/downs for the flow meter and level probes.
 - GPIO **0/2/12** are strapping pins and are avoided as driven outputs. GPIO 15
   is used only as a chip-select (idle high), which is safe at boot.
+- GPIO **14** idles with a weak **internal pull-up** at reset, so the steam
+  upper-element heater SSR on it needs an **external pulldown** on the ULN2003
+  input to stay off during the boot window (before `hal_heater_init` drives it
+  low). Fit pulldowns on the other three heater inputs too, as belt-and-braces.
 - The shared I2C bus wants **external ~4.7 kΩ pull-ups** on SDA/SCL (the OLED
   breakout usually carries them); the firmware also enables the weak internal
   pull-ups as a fallback.
@@ -109,12 +117,12 @@ here). A **buck**
 drops 12 V → 5 V efficiently, then a low-noise **LDO** drops 5 V → 3.3 V for the
 ESP32 and the RTD front-ends — two stages keep the 3.3 V rail quiet without
 cooking a linear regulator (a single 12 V → 3.3 V LDO would dissipate ~1.7 W).
-The level-sensing H-bridge runs on a **separate isolated rail, +12VA / GNDA** (do
-not merge **GNDA** with logic **GND**).
+The level-sensing drive runs on a **separate isolated dual rail, +12VA / GNDA /
+−12VA** (do not merge **GNDA** with logic **GND**).
 
 Continuous electronics draw is ≈ **1.5 W** (the ESP32 dominates); the mains loads
-only present their ULN2003 drive currents on +12 V (~12 mA per SSR input, ~35 mA
-per relay coil), so a **12 V / 1 A** supply is enough.
+only present their ULN2003 drive currents on +12 V (~12 mA per SSR input ×5, ~35 mA
+per relay coil ×2 — ≈130 mA total), so a **12 V / 1 A** supply is still enough.
 
 Full rail tree, recommended chips (buck / LDO / isolated DC-DC), decoupling and
 protection, and the per-rail power budget: **[power.md](power.md)**.
@@ -127,13 +135,16 @@ protection, and the per-rail power budget: **[power.md](power.md)**.
   a safety trip.
 - **Flow:** Hall flow meter on a pulse counter (`pulse_cnt`). Calibrate
   `FLOW_PULSES_PER_ML` in `hal_esp32_sensors.c` against a measured pour.
-- **Level:** boiler probes use **opto-isolated H-bridge AC sensing** — two pins
-  (GPIO14/GPIO2) drive an H-bridge on the floating **+12VA** / **GNDA** rail that applies symmetric
-  AC across probe↔shell (zero net DC, so no electrolysis); conduction lights a
-  per-probe AC optocoupler read as a digital input. Galvanic isolation keeps
-  boiler/mains noise off the ESP32. The control loop debounces the result and
-  drives auto-fill. The reservoir uses a float switch. Full circuit and
-  rationale: **[level-sensing.md](level-sensing.md)**.
+- **Level:** boiler rods use **opto-isolated bipolar ±12 V conductivity sensing**.
+  SELECT/ENABLE/REVERSE feed a 74HC139 decoder whose four outputs each light a
+  drive optocoupler; the opto's own transistor switches **one** rod at a time to
+  +12 V then −12 V vs. the earthed body (probe current ~1–2 mA, so no MOSFET is
+  needed; zero net DC, so no electrolysis). Per-boiler, per-direction optos
+  report conduction; a 74HC157 (SELECT) routes the active boiler's POS/NEG onto
+  two inputs. Real water conducts **both** ways in step with the drive, checked at
+  two frequencies for noise rejection. Isolation keeps boiler/mains noise off the
+  ESP32. The control loop debounces the result and drives auto-fill. The reservoir
+  uses a float switch. Full circuit and rationale: **[level-sensing.md](level-sensing.md)**.
 
 ## Not in v1 (future)
 

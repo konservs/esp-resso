@@ -18,9 +18,15 @@
 #define HEATER_STEPS    100
 #define HEATER_STEP_US  10000
 
-static const int s_heater_gpio[HAL_BOILER_COUNT] = {
-    [HAL_BOILER_BREW] = PIN_SSR_BREW,
-    [HAL_BOILER_STEAM] = PIN_SSR_STEAM,
+/* Two heating elements per boiler (lower + upper), each on its own SSR. Both
+ * elements of a boiler are driven by the same commanded duty (mirrored) — see
+ * hal_heater_set_duty(). Staging them independently (a base element plus a boost
+ * element, or phase-offsetting the two windows for lower peak mains current) is
+ * a future change contained entirely within this file. */
+#define HEATER_ELEMENTS 2
+static const int s_heater_gpio[HAL_BOILER_COUNT][HEATER_ELEMENTS] = {
+    [HAL_BOILER_BREW]  = { PIN_SSR_BREW_LO,  PIN_SSR_BREW_HI  },
+    [HAL_BOILER_STEAM] = { PIN_SSR_STEAM_LO, PIN_SSR_STEAM_HI },
 };
 static volatile float s_heater_duty[HAL_BOILER_COUNT];
 static esp_timer_handle_t s_pwm_timer;
@@ -41,16 +47,21 @@ static void pwm_tick(void *arg)
     step = (step + 1) % HEATER_STEPS;
     for (int i = 0; i < HAL_BOILER_COUNT; i++) {
         const uint32_t on_steps = (uint32_t)(s_heater_duty[i] * HEATER_STEPS);
-        gpio_set_level(s_heater_gpio[i], step < on_steps ? 1 : 0);
+        const int level = step < on_steps ? 1 : 0;
+        for (int e = 0; e < HEATER_ELEMENTS; e++) {
+            gpio_set_level(s_heater_gpio[i][e], level);
+        }
     }
 }
 
 espresso_result_t hal_heater_init(void)
 {
     for (int i = 0; i < HAL_BOILER_COUNT; i++) {
-        gpio_reset_pin(s_heater_gpio[i]);
-        gpio_set_direction(s_heater_gpio[i], GPIO_MODE_OUTPUT);
-        gpio_set_level(s_heater_gpio[i], 0);
+        for (int e = 0; e < HEATER_ELEMENTS; e++) {
+            gpio_reset_pin(s_heater_gpio[i][e]);
+            gpio_set_direction(s_heater_gpio[i][e], GPIO_MODE_OUTPUT);
+            gpio_set_level(s_heater_gpio[i][e], 0);
+        }
         s_heater_duty[i] = 0.0f;
     }
     const esp_timer_create_args_t args = {
@@ -76,7 +87,9 @@ void hal_heater_all_off(void)
 {
     for (int i = 0; i < HAL_BOILER_COUNT; i++) {
         s_heater_duty[i] = 0.0f;
-        gpio_set_level(s_heater_gpio[i], 0);
+        for (int e = 0; e < HEATER_ELEMENTS; e++) {
+            gpio_set_level(s_heater_gpio[i][e], 0);
+        }
     }
 }
 
