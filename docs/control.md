@@ -168,3 +168,22 @@ boiler is only heated while its probe reads covered. If it reads low/uncovered
 boiler's heaters are forced fully off until auto-fill restores the level — so an
 empty or unreadable boiler is never energised. This is proactive; the safety
 supervisor's heat-timeout ([safety.md](safety.md)) is only the slow backstop.
+
+**The interlock is heaters-only — it never blocks or aborts a shot.** By design,
+a low (or never-refilling) brew boiler does *not* stop an extraction: when the
+E61 lever is engaged the pump still runs. This is deliberate:
+
+- The E61 lever is a **mechanical** control the operator is actively holding;
+  refusing to run the pump would fight that direct control and be surprising
+  mid-shot.
+- **Aborting an in-progress extraction ruins the shot** (channeling, a
+  half-filled cup) — worse than letting the operator finish and decide.
+- Briefly running the **vibratory pump** on a low boiler is not the hazard that
+  **dry-firing a heater** is, so the two are protected differently: heaters get a
+  hard interlock, the pump does not.
+
+The level state is surfaced on the display and dashboard so the operator can act.
+(A brew boiler left uncovered long enough will still cool out of the temperature
+ready band — the ordinary "not up to temp" condition — but nothing blocks the
+shot on the *level* reading itself.) Shot start is gated only by temperature
+readiness and the pump duty-cycle guard, never by water level.
