@@ -20,8 +20,8 @@ A dual-boiler E61 machine:
 | 1 | ESP32 dev module (WROOM-32) | Dual-core, classic ESP32 |
 | 2 | MAX31865 RTD amplifier | One per boiler; 430 Ω reference for PT100 |
 | 2 | PT100 RTD probe | M4/M5 threaded or clamp, boiler temperature |
-| 4 | Solid-state relay (zero-cross) | Boiler heaters — **two per boiler** (lower + upper element), slow-PWM; DC-input, driven at 12 V via the ULN2003 |
-| 1 | Pump + zero-cross SSR | Vibratory or rotary; size the SSR for motor inrush (rotary), zero-cross enables pulse-skip flow (vibratory) |
+| 4 | Solid-state relay (zero-cross) | Boiler heaters — **two per boiler** (lower + upper element, ~400 W each), slow-PWM; DC-input, driven at 12 V via the ULN2003. Firmware runs at most 3 at once on a 120 V/15 A circuit — see the load guard in [control.md](control.md) |
+| 1 | Pump + zero-cross SSR | **Ulka EFX5** vibratory (rated 2 min ON / 1 min OFF — firmware enforces the duty cycle, see [control.md](control.md)); zero-cross SSR enables pulse-skip flow. A rotary pump also fits — size the SSR for motor inrush |
 | 2 | Mains solenoid valve (230/120 VAC) | Brew / steam auto-fill inlets; OEM Olab type (e.g. Profitec US1005) |
 | 2 | 12 V relay (PCB, ≥ 250 VAC) | Switch each fill solenoid; optional RC/MOV across contacts |
 | 1 | ULN2003A Darlington array | One low-side buffer for all actuators: 5 SSR inputs (4 heater elements + pump) + 2 relay coils = all 7 channels; COM→+12 V flyback |
@@ -99,7 +99,15 @@ For more than 8 inputs, add a second expander at a different address.
 - GPIO **34/35/36/39** are input-only and have **no internal pull resistors** —
   add external pull-ups/downs for the flow meter and level probes.
 - GPIO **0/2/12** are strapping pins and are avoided as driven outputs. GPIO 15
-  is used only as a chip-select (idle high), which is safe at boot.
+  is used only as a chip-select (idle high), which is safe at boot. **GPIO 12**
+  additionally selects the module's flash voltage and must be **low at reset**: it
+  is left as a no-connect (the chip's internal pull-down holds it low → 3.3 V
+  flash); an optional ~10 kΩ pull-down to GND adds margin. Never pull GPIO 12 high.
+- **WROOM-32 module flash pins** — `SCK/SDO/SDI/SHD/SWP/SCS` (GPIO 6–11) are the
+  module's internal SPI-flash bus, bonded to the flash die inside the can. **Leave
+  them unconnected** (no-connect flags in the schematic, as verified); do not tie
+  them to GND or route them anywhere, or the module won't boot / the flash can
+  corrupt.
 - GPIO **14** idles with a weak **internal pull-up** at reset, so the steam
   upper-element heater SSR on it needs an **external pulldown** on the ULN2003
   input to stay off during the boot window (before `hal_heater_init` drives it

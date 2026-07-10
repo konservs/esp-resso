@@ -11,18 +11,27 @@
 extern "C" {
 #endif
 
+/** The individually-switched heating elements (lower + upper per boiler).
+ *  Addressed independently so the load guard can run a boiler on one element
+ *  or both (see core/load_guard.h). */
+typedef enum {
+    HAL_HEATER_BREW_LO = 0,
+    HAL_HEATER_BREW_HI,
+    HAL_HEATER_STEAM_LO,
+    HAL_HEATER_STEAM_HI,
+    HAL_HEATER_COUNT
+} hal_heater_id_t;
+
 /** Initialise the heater outputs (all off). */
 espresso_result_t hal_heater_init(void);
 
 /**
- * @brief Set a boiler heater duty cycle.
- * @param boiler Which boiler.
- * @param duty   0.0 (off) .. 1.0 (full). Realised as a slow PWM window over the
- *               SSR(s) so each on/off aligns with mains zero-crossings. A boiler
- *               with two elements (lower + upper) drives both from this one
- *               duty; the split is a driver-side detail, invisible to callers.
+ * @brief Set one heating element's duty cycle.
+ * @param element Which element.
+ * @param duty    0.0 (off) .. 1.0 (full). Realised as a slow PWM window over the
+ *                element's SSR so each on/off aligns with mains zero-crossings.
  */
-void hal_heater_set_duty(hal_boiler_id_t boiler, float duty);
+void hal_heater_set_duty(hal_heater_id_t element, float duty);
 
 /** Immediately cut all heaters. Used by the safety supervisor. */
 void hal_heater_all_off(void);

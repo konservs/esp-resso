@@ -30,6 +30,8 @@ Thumbs.db
 
 # KiCad — auto-generated / local-only (the .kicad_pro/.kicad_sch/.kicad_pcb are tracked)
 *-backups/
+# Plotted manufacturing output — regenerate from the .kicad_pcb
+kicad/**/gerber/
 fp-info-cache
 *.lck
 *.kicad_prl

@@ -9,6 +9,10 @@
  *     (used here for the flow meter and level probes -> add external pulls).
  *   - GPIO 0/2/12/15 are strapping pins; avoided for driven outputs. GPIO 15
  *     is used only as an SPI chip-select (idle-high), which is boot-safe.
+ *   - GPIO 6-11 are the WROOM module's internal SPI-flash bus (SCK/SDO/SDI/
+ *     SHD/SWP/SCS); never wired -> leave those module pads no-connect. GPIO 12
+ *     sets the flash voltage, so keep it low at reset (no-connect + the chip's
+ *     internal pull-down, or a 10k pull-down); never drive it high.
  */
 #ifndef ESPRESSO_DRIVERS_PINS_H
 #define ESPRESSO_DRIVERS_PINS_H

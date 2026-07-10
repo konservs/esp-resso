@@ -71,8 +71,13 @@ void control_task(void *arg)
         bool both_ready = false;
         bool pump_on = false;
         float pump_duty = 0.0f;
+        load_guard_output_t heat = { { 0.0f, 0.0f, 0.0f, 0.0f } };
 
         xSemaphoreTake(app->lock, portMAX_DELAY);
+        /* Gate the lever/backflush transitions on the pump's duty-cycle guard
+         * before draining this cycle's events, so a shot cannot start while the
+         * pump is resting. */
+        machine_set_pump_ready(&app->machine, pump_guard_can_brew(&app->pump_guard));
         drain_events(app);
         const machine_state_t state = machine_state(&app->machine);
 
@@ -82,6 +87,16 @@ void control_task(void *arg)
             brew_duty = bt.ok ? bo.heater_duty : 0.0f;
             steam_duty = st.ok ? so.heater_duty : 0.0f;
             both_ready = bt.ok && st.ok && bo.at_setpoint && so.at_setpoint;
+
+            /* Cap simultaneous heater elements to the mains budget: brew boiler
+             * has priority (both elements while warming, lower-only once ready),
+             * steam gets what remains. See core/load_guard.h. */
+            const load_guard_input_t li = {
+                .brew_duty = brew_duty,
+                .steam_duty = steam_duty,
+                .brew_at_setpoint = bt.ok && bo.at_setpoint,
+            };
+            heat = load_guard_apply(&li, app->settings.max_active_heaters);
         }
 
         /* Brew sequencing on entering/while/leaving BREWING. */
@@ -100,10 +115,20 @@ void control_task(void *arg)
             brew_stop(&app->brew);
         }
 
+        /* Advance the pump's duty-cycle model with this cycle's command. It
+         * only fills while brewing (the sole state that drives the pump) and
+         * drains in every other state, so idle time counts as rest. */
+        pump_guard_update(&app->pump_guard, pump_on, now);
+        app->pump_cooling = pump_guard_cooling(&app->pump_guard);
+        app->pump_cooldown_ms = pump_guard_cooldown_ms(&app->pump_guard);
+
         app->brew_temp = bt;
         app->steam_temp = st;
         app->brew_duty = brew_duty;
         app->steam_duty = steam_duty;
+        for (int i = 0; i < LOAD_HEATER_COUNT; i++) {
+            app->heater_active[i] = heat.duty[i] > 0.0f;
+        }
         app->both_ready = both_ready;
 
         /* Auto-fill decision (reused to drive the valves below) + diagnostics. */
@@ -117,9 +142,12 @@ void control_task(void *arg)
         prev_state = state;
         xSemaphoreGive(app->lock);
 
-        /* Drive actuators. */
-        hal_heater_set_duty(HAL_BOILER_BREW, brew_duty);
-        hal_heater_set_duty(HAL_BOILER_STEAM, steam_duty);
+        /* Drive actuators. Each element runs the duty the load guard allotted
+         * it (0 for any it held off). */
+        hal_heater_set_duty(HAL_HEATER_BREW_LO,  heat.duty[LOAD_BREW_LO]);
+        hal_heater_set_duty(HAL_HEATER_BREW_HI,  heat.duty[LOAD_BREW_HI]);
+        hal_heater_set_duty(HAL_HEATER_STEAM_LO, heat.duty[LOAD_STEAM_LO]);
+        hal_heater_set_duty(HAL_HEATER_STEAM_HI, heat.duty[LOAD_STEAM_HI]);
         if (pump_on) {
             hal_pump_set(pump_duty);
         } else {

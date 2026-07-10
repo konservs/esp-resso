@@ -6,6 +6,11 @@
 #define DEFAULT_STEAM_SETPOINT  125.0f
 #define DEFAULT_MAX_TEMP        165.0f
 
+/* An enabled pump duty-cycle guard must allow at least this much continuous
+ * run time; a sub-minute capacity would make the startup cooldown gate a shot
+ * for longer than the pump can run. */
+#define PUMP_MIN_ON_MAX_MS      60000u
+
 void settings_load_defaults(settings_t *s)
 {
     s->brew_setpoint = DEFAULT_BREW_SETPOINT;
@@ -35,6 +40,16 @@ void settings_load_defaults(settings_t *s)
         .max_shot_ms = 60000
     };
     s->brew = brew;
+
+    /* Ulka EFX5 vibratory pump: rated 2 min ON / 1 min OFF. */
+    const pump_guard_config_t pump = {
+        .on_max_ms = 120000,
+        .off_min_ms = 60000
+    };
+    s->pump = pump;
+
+    /* 120 V / 15 A supply: at most three 400 W elements at once. */
+    s->max_active_heaters = LOAD_DEFAULT_MAX_ACTIVE;
 
     const safety_config_t safety = {
         .max_temp = DEFAULT_MAX_TEMP,
@@ -72,6 +87,21 @@ espresso_result_t settings_validate(const settings_t *s)
         return ESPRESSO_ERR_RANGE;
     }
     if (s->brew.max_shot_ms == 0) {
+        return ESPRESSO_ERR_RANGE;
+    }
+    /* When the duty-cycle guard is enabled (on_max_ms == 0 disables it, e.g.
+     * for a rotary pump), the pump must have at least a minute of run capacity
+     * and a positive rest time — otherwise the initial cooldown could gate a
+     * shot for longer than the pump can even run, and the drain-rate arithmetic
+     * would be ill-defined. */
+    if (s->pump.on_max_ms > 0 &&
+        (s->pump.on_max_ms < PUMP_MIN_ON_MAX_MS || s->pump.off_min_ms == 0)) {
+        return ESPRESSO_ERR_RANGE;
+    }
+    /* The heater load cap must allow at least three elements — brew's two plus
+     * one for steam — so neither boiler can be starved of heat, and no more than
+     * the four that physically exist. */
+    if (s->max_active_heaters < 3 || s->max_active_heaters > LOAD_HEATER_COUNT) {
         return ESPRESSO_ERR_RANGE;
     }
     if ((int)s->active_profile < 0 || s->active_profile >= BREW_PROFILE_COUNT) {

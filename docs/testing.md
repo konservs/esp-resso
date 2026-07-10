@@ -72,7 +72,7 @@ To test glue that calls the HAL, fake the relevant functions with fff — see
 ```c
 #include "fff.h"
 DEFINE_FFF_GLOBALS;
-FAKE_VOID_FUNC(hal_heater_set_duty, hal_boiler_id_t, float);
+FAKE_VOID_FUNC(hal_heater_set_duty, hal_heater_id_t, float);
 /* ... call the code under test, then: */
 TEST_ASSERT_EQUAL_UINT(1, hal_heater_set_duty_fake.call_count);
 ```

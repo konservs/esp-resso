@@ -10,6 +10,7 @@
 #include "app.h"
 
 #include <stdio.h>
+#include <string.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -21,6 +22,51 @@
 #include "hal/hal_input.h"
 #include "hal/hal_storage.h"
 #include "hal/hal_time.h"
+
+/* Bottom-band layout (see docs/display-layout.png): each boiler shows its
+ * temperature and two element squares — empty = element off, filled = driven. */
+#define BAND_Y   47 /* top of the bottom band border   */
+#define TEMP_Y   52 /* baseline-ish row for the number */
+#define SQ_SIZE   5 /* heater-element square, px       */
+#define SQ_X     44 /* square x within a 64px cell     */
+#define SQ_LO_Y  49 /* lower element (top square)      */
+#define SQ_HI_Y  56 /* upper element (bottom square)   */
+
+/* Friendly one-word status for the top line. */
+static const char *status_text(machine_state_t s)
+{
+    switch (s) {
+    case MACHINE_BOOT:      return "Starting...";
+    case MACHINE_HEATING:   return "Heating...";
+    case MACHINE_READY:     return "Ready";
+    case MACHINE_BREWING:   return "Brewing";
+    case MACHINE_STEAMING:  return "Steaming";
+    case MACHINE_BACKFLUSH: return "Backflush";
+    case MACHINE_SLEEP:     return "Sleep";
+    case MACHINE_FAULT:     return "FAULT";
+    default:                return "?";
+    }
+}
+
+/* One boiler cell at x-origin @p x0: "NN\xB0C" plus two element squares. */
+static void draw_boiler(uint8_t x0, bool sensor_ok, float temp,
+                        bool lo_on, bool hi_on)
+{
+    char buf[6];
+    if (sensor_ok) {
+        snprintf(buf, sizeof(buf), "%.0f", (double)temp);
+    } else {
+        snprintf(buf, sizeof(buf), "--");
+    }
+    uint8_t x = x0 + 4;
+    hal_display_text(x, TEMP_Y, buf);
+    x += (uint8_t)(strlen(buf) * 6);       /* 5px glyph + 1px gap */
+    hal_display_rect(x, TEMP_Y, 3, 3, false); /* degree ring */
+    hal_display_text((uint8_t)(x + 4), TEMP_Y, "C");
+    /* Element indicators at a fixed offset so both cells line up. */
+    hal_display_rect((uint8_t)(x0 + SQ_X), SQ_LO_Y, SQ_SIZE, SQ_SIZE, lo_on);
+    hal_display_rect((uint8_t)(x0 + SQ_X), SQ_HI_Y, SQ_SIZE, SQ_SIZE, hi_on);
+}
 
 /* Apply edited settings to the live controllers and persist them. */
 static void commit_settings(app_state_t *app, ui_t *ui)
@@ -38,30 +84,50 @@ static void render(app_state_t *app, const ui_t *ui)
 {
     /* Snapshot shared state under the lock, then draw without holding it. */
     hal_temp_reading_t bt, st;
-    temp_c_t bsp, ssp;
     machine_state_t state;
     uint32_t shot_ms;
+    bool cooling;
+    uint32_t cooldown_ms;
+    bool heater[LOAD_HEATER_COUNT];
     ui_screen_t screen = ui_screen(ui);
     ui_item_t item = ui_item(ui);
 
     xSemaphoreTake(app->lock, portMAX_DELAY);
     bt = app->brew_temp;
     st = app->steam_temp;
-    bsp = app->settings.brew_setpoint;
-    ssp = app->settings.steam_setpoint;
     state = machine_state(&app->machine);
     shot_ms = app->shot_elapsed_ms;
+    cooling = app->pump_cooling;
+    cooldown_ms = app->pump_cooldown_ms;
+    for (int i = 0; i < LOAD_HEATER_COUNT; i++) {
+        heater[i] = app->heater_active[i];
+    }
     xSemaphoreGive(app->lock);
 
     hal_display_clear();
 
     if (screen == UI_STATUS) {
-        hal_display_printf(0, 0, "%s", machine_state_name(state));
-        hal_display_printf(0, 16, "Brew  %4.1f/%2.0f", (double)bt.celsius, (double)bsp);
-        hal_display_printf(0, 28, "Steam %4.1f/%3.0f", (double)st.celsius, (double)ssp);
+        /* Top: machine status, or the shot timer / pump-cooldown when relevant. */
         if (state == MACHINE_BREWING) {
-            hal_display_printf(0, 44, "Shot %5.1fs", (double)shot_ms / 1000.0);
+            hal_display_printf(0, 4, "Brewing  %.1fs", (double)shot_ms / 1000.0);
+        } else if (cooling) {
+            /* Pump is resting on its duty cycle; a shot is held off until this
+             * counts down. Round up so it never shows 0 while still locked. */
+            hal_display_printf(0, 4, "Pump Cooling %lus",
+                               (unsigned long)((cooldown_ms + 999) / 1000));
+        } else {
+            hal_display_printf(0, 4, "%s", status_text(state));
         }
+
+        /* Bottom: both boiler temperatures with per-element heater squares. */
+        hal_display_rect(0, BAND_Y, hal_display_width(),
+                         (uint8_t)(hal_display_height() - BAND_Y), false);
+        hal_display_rect(64, BAND_Y, 1,
+                         (uint8_t)(hal_display_height() - BAND_Y), true);
+        draw_boiler(0, bt.ok, bt.celsius,
+                    heater[LOAD_BREW_LO], heater[LOAD_BREW_HI]);
+        draw_boiler(64, st.ok, st.celsius,
+                    heater[LOAD_STEAM_LO], heater[LOAD_STEAM_HI]);
     } else {
         char value[24];
         ui_item_value(ui, item, value, sizeof(value));

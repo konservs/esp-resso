@@ -52,6 +52,22 @@ void hal_display_progress(uint8_t x, uint8_t y, uint8_t w, uint8_t h, float frac
     ssd1306_fill_rect(x + 1, y + 1, (int)((w - 2) * frac), h - 2, true);
 }
 
+void hal_display_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, bool filled)
+{
+    if (w == 0 || h == 0) {
+        return;
+    }
+    if (filled) {
+        ssd1306_fill_rect(x, y, w, h, true);
+        return;
+    }
+    /* 1px outline. */
+    ssd1306_fill_rect(x, y, w, 1, true);             /* top    */
+    ssd1306_fill_rect(x, y + h - 1, w, 1, true);     /* bottom */
+    ssd1306_fill_rect(x, y, 1, h, true);             /* left   */
+    ssd1306_fill_rect(x + w - 1, y, 1, h, true);     /* right  */
+}
+
 void hal_display_flush(void)
 {
     ssd1306_flush();

@@ -11,7 +11,9 @@
 #define ESPRESSO_CORE_SETTINGS_H
 
 #include "core/brew.h"
+#include "core/load_guard.h"
 #include "core/pid.h"
+#include "core/pump_guard.h"
 #include "core/safety.h"
 #include "core/types.h"
 
@@ -26,6 +28,9 @@ typedef struct {
     pid_config_t        steam_pid;
     brew_profile_type_t active_profile; /**< Selected brew profile.       */
     brew_params_t       brew;           /**< Params the profiles build from. */
+    pump_guard_config_t pump;           /**< Vibratory-pump duty-cycle rating. */
+    uint8_t             max_active_heaters; /**< Mains load cap: heater elements
+                                             *   on at once (see load_guard.h).  */
     safety_config_t     safety;
 } settings_t;
 

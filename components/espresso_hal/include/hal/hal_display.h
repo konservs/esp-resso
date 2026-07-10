@@ -39,6 +39,10 @@ void hal_display_printf(uint8_t x, uint8_t y, const char *fmt, ...);
 /** Draw a horizontal progress bar (0..1) — e.g. heat-up or shot progress. */
 void hal_display_progress(uint8_t x, uint8_t y, uint8_t w, uint8_t h, float frac);
 
+/** Draw a rectangle: a solid block when @p filled, else a 1px outline. Used for
+ *  the per-element heater indicators (empty = off, filled = driven). */
+void hal_display_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, bool filled);
+
 /** Push the framebuffer to the panel over I2C. */
 void hal_display_flush(void);
 

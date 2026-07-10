@@ -32,7 +32,10 @@ standing between a fault and a hazard.
 
 3. **Control-loop hygiene:** PID output is clamped to [0, 1]; auto-fill is gated
    on the reservoir having water (dry-fire protection) and is disabled during a
-   fault.
+   fault; a **mains load guard** caps how many heater elements run at once so the
+   heaters + pump can't overload the supply circuit (see
+   [control.md](control.md)); and a **pump duty-cycle guard** stops a vibratory
+   pump being run past its rating.
 
 ## Fail-safe defaults
 

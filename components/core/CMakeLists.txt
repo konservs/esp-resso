@@ -10,6 +10,8 @@ set(CORE_SRCS
     src/rtd.c
     src/boiler.c
     src/brew.c
+    src/load_guard.c
+    src/pump_guard.c
     src/state_machine.c
     src/safety.c
     src/settings.c

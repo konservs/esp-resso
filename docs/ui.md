@@ -9,8 +9,14 @@ are abstractions, and all interaction logic is portable, host-tested `core` code
 
 A 128×64 I2C **SSD1306 OLED** (address 0x3C) shows:
 
-- **Status screen:** machine state, brew & steam temperatures vs setpoints, and
-  the live shot timer while brewing.
+- **Status screen** (layout in [display-layout.png](display-layout.png)): a status
+  line at the top (machine state, or the live shot timer while brewing, or a
+  pump-cooldown countdown), and **both boiler temperatures along the bottom**.
+  Beside each temperature are **two small squares** — the boiler's lower and
+  upper heater elements — **empty when that element is off, filled when it is
+  being driven** (including partial PID duty). This makes the load guard visible:
+  during warm-up you see the steam boiler's upper square empty while the brew
+  boiler runs both (see [control.md](control.md)).
 - **Config screens:** the selected menu item and its value.
 
 `hal_display` is a small, panel-agnostic text/graphics API

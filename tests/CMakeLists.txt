@@ -57,6 +57,8 @@ set(CORE_TESTS
     test_rtd
     test_boiler
     test_brew
+    test_load_guard
+    test_pump_guard
     test_state_machine
     test_safety
     test_settings

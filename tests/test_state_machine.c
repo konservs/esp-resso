@@ -64,6 +64,24 @@ static void test_no_sleep_while_brewing(void)
     TEST_ASSERT_EQUAL_INT(MACHINE_BREWING, machine_dispatch(&m, EV_SLEEP));
 }
 
+static void test_pump_cooling_blocks_brew(void)
+{
+    machine_t m = ready_machine();
+    machine_set_pump_ready(&m, false); /* pump resting on its duty cycle */
+
+    /* The lever is ignored while the pump must rest: stay in READY. */
+    TEST_ASSERT_EQUAL_INT(MACHINE_READY, machine_dispatch(&m, EV_BREW_LEVER_ON));
+    /* Backflush (also pump-driven) is likewise held off. */
+    TEST_ASSERT_EQUAL_INT(MACHINE_READY, machine_dispatch(&m, EV_BACKFLUSH));
+    /* Steam does not use the pump, so it is still allowed. */
+    TEST_ASSERT_EQUAL_INT(MACHINE_STEAMING, machine_dispatch(&m, EV_STEAM_ON));
+    machine_dispatch(&m, EV_STEAM_OFF);
+
+    /* Once the pump has recovered, the lever starts a shot again. */
+    machine_set_pump_ready(&m, true);
+    TEST_ASSERT_EQUAL_INT(MACHINE_BREWING, machine_dispatch(&m, EV_BREW_LEVER_ON));
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -73,5 +91,6 @@ int main(void)
     RUN_TEST(test_steam_cycle);
     RUN_TEST(test_fault_latches_until_cleared);
     RUN_TEST(test_no_sleep_while_brewing);
+    RUN_TEST(test_pump_cooling_blocks_brew);
     return UNITY_END();
 }

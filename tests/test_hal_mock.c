@@ -14,7 +14,7 @@
 
 DEFINE_FFF_GLOBALS;
 
-FAKE_VOID_FUNC(hal_heater_set_duty, hal_boiler_id_t, float);
+FAKE_VOID_FUNC(hal_heater_set_duty, hal_heater_id_t, float);
 FAKE_VOID_FUNC(hal_heater_all_off);
 
 void setUp(void)
@@ -26,16 +26,16 @@ void setUp(void)
 void tearDown(void) {}
 
 /* Stand-in for a task helper that drives the heater HAL. */
-static void apply_duty(hal_boiler_id_t boiler, float duty)
+static void apply_duty(hal_heater_id_t element, float duty)
 {
-    hal_heater_set_duty(boiler, duty);
+    hal_heater_set_duty(element, duty);
 }
 
 static void test_fake_records_arguments(void)
 {
-    apply_duty(HAL_BOILER_BREW, 0.5f);
+    apply_duty(HAL_HEATER_BREW_LO, 0.5f);
     TEST_ASSERT_EQUAL_UINT(1, hal_heater_set_duty_fake.call_count);
-    TEST_ASSERT_EQUAL_INT(HAL_BOILER_BREW, hal_heater_set_duty_fake.arg0_val);
+    TEST_ASSERT_EQUAL_INT(HAL_HEATER_BREW_LO, hal_heater_set_duty_fake.arg0_val);
     TEST_ASSERT_EQUAL_FLOAT(0.5f, hal_heater_set_duty_fake.arg1_val);
 }
 

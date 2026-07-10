@@ -16,6 +16,7 @@
 
 #include "core/boiler.h"
 #include "core/brew.h"
+#include "core/pump_guard.h"
 #include "core/safety.h"
 #include "core/settings.h"
 #include "core/state_machine.h"
@@ -43,6 +44,7 @@ typedef struct {
     boiler_t   brew_boiler;
     boiler_t   steam_boiler;
     brew_t     brew;
+    pump_guard_t pump_guard;
     safety_t   safety;
 
     /* Live telemetry published by the control task (for UI / safety / net). */
@@ -50,9 +52,14 @@ typedef struct {
     hal_temp_reading_t steam_temp;
     float    brew_duty;
     float    steam_duty;
+    bool     heater_active[LOAD_HEATER_COUNT]; /**< Per-element drive state after
+                                                *   the load guard (::load_heater_t
+                                                *   order); for the UI indicators. */
     float    shot_volume_ml;
     uint32_t shot_elapsed_ms;
     bool     both_ready;
+    bool     pump_cooling;     /**< Pump duty-cycle guard is resting.         */
+    uint32_t pump_cooldown_ms; /**< Rest remaining before a shot can start.   */
 
     /* Water-level diagnostics published by the control task. */
     level_status_t brew_level;
@@ -83,6 +90,10 @@ typedef struct {
     bool     both_ready;
     float    shot_volume_ml;
     uint32_t shot_elapsed_ms;
+
+    /* Pump duty-cycle guard: resting (can't brew) + remaining cooldown. */
+    bool     pump_cooling;
+    uint32_t pump_cooldown_ms;
 
     /* Component self-check for the diagnostics view. */
     bool           display_ok;

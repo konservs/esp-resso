@@ -44,10 +44,20 @@ typedef enum {
 
 typedef struct {
     machine_state_t state;
+    bool            pump_ready; /**< Guard: false while the pump must rest.  */
 } machine_t;
 
 /** Initialise to ::MACHINE_BOOT. */
 void machine_init(machine_t *m);
+
+/**
+ * @brief Set whether the pump is available to start a shot.
+ *
+ * While false (the pump's duty-cycle guard is resting — see pump_guard.h),
+ * ::EV_BREW_LEVER_ON and ::EV_BACKFLUSH will not leave ::MACHINE_READY, so a
+ * new pump-driven cycle cannot start. Set by the control task each cycle.
+ */
+void machine_set_pump_ready(machine_t *m, bool ready);
 
 /** Apply an event; returns the (possibly unchanged) resulting state. */
 machine_state_t machine_dispatch(machine_t *m, machine_event_t ev);

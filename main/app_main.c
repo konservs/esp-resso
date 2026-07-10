@@ -44,6 +44,8 @@ void app_get_telemetry(app_telemetry_t *out)
     out->both_ready = g_app.both_ready;
     out->shot_volume_ml = g_app.shot_volume_ml;
     out->shot_elapsed_ms = g_app.shot_elapsed_ms;
+    out->pump_cooling = g_app.pump_cooling;
+    out->pump_cooldown_ms = g_app.pump_cooldown_ms;
     out->brew_level = g_app.brew_level;
     out->steam_level = g_app.steam_level;
     out->reservoir_ok = g_app.reservoir_present;
@@ -82,6 +84,7 @@ static void init_controllers(app_state_t *app)
     boiler_init(&app->brew_boiler, s->brew_setpoint, &s->brew_pid, 1.0f);
     boiler_init(&app->steam_boiler, s->steam_setpoint, &s->steam_pid, 2.0f);
     app_apply_brew_profile(app);
+    pump_guard_init(&app->pump_guard, &s->pump);
     safety_init(&app->safety, &s->safety);
     machine_init(&app->machine);
 }

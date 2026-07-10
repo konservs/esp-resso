@@ -32,6 +32,36 @@ conservative. To tune for your machine:
 The brew boiler and steam boiler tune separately — the steam boiler is larger
 and slower, so it usually wants lower gains.
 
+## Mains load guard
+
+Each boiler has **two 400 W elements** (lower + upper), so all four together draw
+**1600 W**. A 120 V / 15 A receptacle only carries **~1440 W** continuously, and
+the pump (~52 W) and electronics sit on top of that — running all four would trip
+the breaker. [`core/load_guard.c`](../components/core/src/load_guard.c) caps the
+number of elements energised at once to `settings.max_active_heaters` (**3** by
+default → 3 × 400 W = 1200 W, leaving headroom).
+
+Allocation follows how the machine is used, brew boiler first:
+
+- **Warming up:** the brew boiler takes **both** its elements (fastest heat-up);
+  the steam boiler is held to its **lower element only** → brew-LO + brew-HI +
+  steam-LO.
+- **Brew at temperature:** the brew boiler holds on its **lower element only** (a
+  PID trim needs little power), freeing a slot so steam runs **both** → brew-LO +
+  steam-LO + steam-HI.
+
+Either way at most three elements run, and the guard re-decides every control
+cycle, so if the brew boiler drops out of its band (e.g. a cold-water refill mid
+shot) it immediately reclaims priority. The cap is enforced at the level of
+*enabled* elements: a held-off element is driven to 0 duty, so it can never be on
+even for a PWM window, giving a hard ceiling on simultaneous current.
+
+The elements are addressed individually through the HAL
+(`hal_heater_set_duty(HAL_HEATER_BREW_LO, …)` etc.); the guard is a pure function
+and is unit-tested in [`tests/test_load_guard.c`](../tests/test_load_guard.c).
+Set `max_active_heaters` to **4** to lift the cap — e.g. on a 230 V circuit that
+can comfortably carry all four elements.
+
 ## Brew profiles
 
 The shot is described by a **profile of stages**
@@ -59,6 +89,40 @@ Add stages in `brew_profile_build()` (or build a custom `brew_profile_t`). When
 a pressure transducer is fitted, implement the `BREW_PUMP_PRESSURE` branch in
 `brew_update()` with a pump PID targeting `stage.pressure_bar`. Nothing else in
 the engine needs to change.
+
+## Pump duty cycle
+
+The vibratory pump (an **Ulka EFX5**) is rated for an intermittent duty cycle —
+**2 min ON / 1 min OFF** — not continuous running; overrun cooks the solenoid
+coil. A single shot is well inside the rating, but back-to-back shots or a long
+extraction/backflush add up, so
+[`core/pump_guard.c`](../components/core/src/pump_guard.c) tracks the pump's
+accumulated run time as a **leaky-bucket thermal model**:
+
+- Running fills the bucket at 1 ms/ms, capped at `on_max_ms` (2 min).
+- Resting drains it at `on_max_ms / off_min_ms` (2×), so emptying a full bucket
+  takes exactly `off_min_ms` (1 min) — matching the datasheet ratio.
+
+When the bucket fills it trips a **cooling lock-out** and stays locked until it
+has fully drained (a full rest). The guard also **starts locked** at power-up:
+the firmware can't know how hard the pump was worked before this boot, so it
+assumes a full bucket and holds off even the first shot until a full rest has
+elapsed. Idle time — including the several-minute boiler warm-up — drains the
+bucket, so a cold start rarely actually waits, while a warm restart straight
+after heavy use correctly asks the user to wait.
+
+The rating lives in `settings.pump` (`pump_guard_config_t`); `on_max_ms = 0`
+disables the guard (e.g. for a rotary pump), and an enabled guard is required to
+allow **at least one minute** of run capacity (validated in `settings.c`) so the
+startup cooldown can never gate a shot for longer than the pump can even run.
+
+`control_task` advances the model every cycle with the actual pump command and,
+before it processes the lever, calls `machine_set_pump_ready()` so the
+`READY → BREWING` (and `→ BACKFLUSH`) transition is **held off while the pump is
+resting**. The machine stays in `READY` and the display / dashboard show
+**"Pump Cooling"** with a countdown; releasing and re-engaging the lever after
+the cooldown starts the shot. Any pump-on time counts as full load regardless of
+the commanded duty — the conservative, pump-protecting choice.
 
 ## Auto-fill
 

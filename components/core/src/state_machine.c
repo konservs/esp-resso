@@ -3,6 +3,12 @@
 void machine_init(machine_t *m)
 {
     m->state = MACHINE_BOOT;
+    m->pump_ready = true;
+}
+
+void machine_set_pump_ready(machine_t *m, bool ready)
+{
+    m->pump_ready = ready;
 }
 
 machine_state_t machine_state(const machine_t *m)
@@ -65,12 +71,18 @@ machine_state_t machine_dispatch(machine_t *m, machine_event_t ev)
         break;
 
     case MACHINE_READY:
+        /* Pump-driven cycles are held off while the pump is cooling down; the
+         * lever/backflush request is simply ignored (the UI shows why). */
         if (ev == EV_BREW_LEVER_ON) {
-            m->state = MACHINE_BREWING;
+            if (m->pump_ready) {
+                m->state = MACHINE_BREWING;
+            }
         } else if (ev == EV_STEAM_ON) {
             m->state = MACHINE_STEAMING;
         } else if (ev == EV_BACKFLUSH) {
-            m->state = MACHINE_BACKFLUSH;
+            if (m->pump_ready) {
+                m->state = MACHINE_BACKFLUSH;
+            }
         } else if (ev == EV_NOT_READY) {
             m->state = MACHINE_HEATING;
         }

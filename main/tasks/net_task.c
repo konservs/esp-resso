@@ -118,7 +118,10 @@ static const char DASHBOARD_HTML[] =
     "<div class='row'><span class='k'>Temp sensor</span><span id='stt' class='st'>--</span></div>"
     "<div class='row'><span class='k'>Water level</span><span id='sl' class='st'>--</span></div>"
     "</div>"
-    "<div class='card'><div class='row'><span class='k'>Shot</span><span id='shot' class='st'>--</span></div></div>"
+    "<div class='card'>"
+    "<div class='row'><span class='k'>Shot</span><span id='shot' class='st'>--</span></div>"
+    "<div class='row'><span class='k'>Pump</span><span id='pump' class='st'>--</span></div>"
+    "</div>"
     "<div class='card' id='admin' style='display:none'><button onclick='forget()'>Reconfigure Wi-Fi</button></div>"
     "<script>"
     "function g(id){return document.getElementById(id)}"
@@ -135,6 +138,8 @@ static const char DASHBOARD_HTML[] =
     "setTemp(g('bt'),d.brew);setLevel(g('bl'),d.brew.level);"
     "setTemp(g('stt'),d.steam);setLevel(g('sl'),d.steam.level);"
     "g('shot').className='st';g('shot').textContent=(d.shot.ms/1000).toFixed(1)+'s / '+d.shot.ml.toFixed(0)+'ml';"
+    "if(d.pump.cooling){g('pump').textContent='Cooling '+Math.ceil(d.pump.ms/1000)+'s';g('pump').className='st warn'}"
+    "else{g('pump').textContent='Ready';g('pump').className='st ok'}"
     "g('admin').style.display=d.role==='admin'?'':'none';"
     "}catch(e){g('state').textContent='offline'}}"
     "async function forget(){if(!confirm('Forget Wi-Fi and reboot into setup mode?'))return;"
@@ -387,14 +392,15 @@ static esp_err_t telemetry_get(httpd_req_t *req)
     app_telemetry_t t;
     app_get_telemetry(&t);
 
-    char buf[512];
+    char buf[640];
     const int n = snprintf(
         buf, sizeof(buf),
         "{\"state\":\"%s\",\"safety\":\"%s\",\"ready\":%s,\"role\":\"%s\","
         "\"display\":%s,\"buttons\":%s,\"reservoir\":%s,"
         "\"brew\":{\"t\":%.1f,\"sp\":%.1f,\"ok\":%s,\"fault\":%u,\"level\":%d},"
         "\"steam\":{\"t\":%.1f,\"sp\":%.1f,\"ok\":%s,\"fault\":%u,\"level\":%d},"
-        "\"shot\":{\"ml\":%.1f,\"ms\":%lu}}",
+        "\"shot\":{\"ml\":%.1f,\"ms\":%lu},"
+        "\"pump\":{\"cooling\":%s,\"ms\":%lu}}",
         machine_state_name(t.state), safety_trip_name(t.safety_trip),
         t.both_ready ? "true" : "false",
         role == ROLE_ADMIN ? "admin" : "user",
@@ -406,7 +412,9 @@ static esp_err_t telemetry_get(httpd_req_t *req)
         (double)t.steam_temp, (double)t.steam_setpoint,
         t.steam_sensor_ok ? "true" : "false",
         (unsigned)t.steam_temp_fault, (int)t.steam_level,
-        (double)t.shot_volume_ml, (unsigned long)t.shot_elapsed_ms);
+        (double)t.shot_volume_ml, (unsigned long)t.shot_elapsed_ms,
+        t.pump_cooling ? "true" : "false",
+        (unsigned long)t.pump_cooldown_ms);
 
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, buf, n);
