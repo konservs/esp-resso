@@ -11,6 +11,8 @@
 #ifndef ESPRESSO_HAL_DISPLAY_H
 #define ESPRESSO_HAL_DISPLAY_H
 
+#include <stddef.h>
+
 #include "hal/hal.h"
 
 #ifdef __cplusplus
@@ -45,6 +47,11 @@ void hal_display_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, bool filled);
 
 /** Push the framebuffer to the panel over I2C. */
 void hal_display_flush(void);
+
+/** Copy the raw framebuffer (1 bpp, panel-native page format) into @p buf, up to
+ *  @p len bytes; returns bytes written. A full frame is width*height/8 bytes.
+ *  Used to mirror the panel on the web dashboard. */
+size_t hal_display_snapshot(uint8_t *buf, size_t len);
 
 #ifdef __cplusplus
 }

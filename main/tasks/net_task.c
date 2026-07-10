@@ -16,7 +16,8 @@
  *
  * As a station it serves:
  *   - "/"               a small self-contained HTML dashboard,
- *   - "/api/telemetry"  a JSON snapshot the page polls once per second, and
+ *   - "/api/telemetry"  a JSON snapshot the page polls once per second,
+ *   - "/api/display"    the raw OLED framebuffer, mirrored on a canvas, and
  *   - "/api/forget"     clears saved Wi-Fi and reboots into the setup portal.
  *
  * As the setup portal (SoftAP) it serves:
@@ -56,6 +57,7 @@ static const char *TAG = "net";
 #include "mbedtls/base64.h"
 #include "mbedtls/sha256.h"
 
+#include "hal/hal_display.h"
 #include "hal/hal_storage.h"
 
 #define WIFI_NVS_KEY   "wifi"   /* hal_storage blob key for saved credentials. */
@@ -103,8 +105,11 @@ static const char DASHBOARD_HTML[] =
     ".ok{color:#7cd97c}.warn{color:#e0b02b}.err{color:#e0552b}"
     "#state{font-weight:600;color:#e0892b}"
     "button{background:#3a2e24;color:#caa;border:0;border-radius:8px;padding:.5rem .8rem;font-size:.85rem}"
+    "#oled{display:block;width:100%;max-width:512px;margin:.2rem auto 1rem;"
+    "image-rendering:pixelated;background:#000;border-radius:6px}"
     "</style></head><body>"
     "<h1>ESP.Resso &middot; <span id='state'>...</span></h1>"
+    "<canvas id='oled' width='512' height='256'></canvas>"
     "<div class='card'>"
     "<div class='row'><span class='k'>Display</span><span id='disp' class='st'>--</span></div>"
     "<div class='row'><span class='k'>Buttons</span><span id='btns' class='st'>--</span></div>"
@@ -146,7 +151,15 @@ static const char DASHBOARD_HTML[] =
     "await fetch('/api/forget',{method:'POST'});"
     "document.body.innerHTML='<h1>Rebooting into setup mode...</h1>"
     "<p>Reconnect to the <b>" CONFIG_ESPRESSO_AP_SSID "</b> network to set up Wi-Fi.</p>'}"
+    "var OW=128,OH=64,OZ=4,octx=g('oled').getContext('2d');"
+    "function drawOled(b){octx.fillStyle='#000';octx.fillRect(0,0,OW*OZ,OH*OZ);"
+    "for(var p=0;p<8;p++)for(var x=0;x<OW;x++){var by=b[p*OW+x];if(!by)continue;"
+    "for(var q=0;q<8;q++){if(!((by>>q)&1))continue;var y=p*8+q;"
+    "octx.fillStyle=y<16?'#ffcc00':'#29b6f6';octx.fillRect(x*OZ,y*OZ,OZ,OZ)}}}"
+    "async function tickOled(){try{const r=await fetch('/api/display');if(!r.ok)return;"
+    "const b=new Uint8Array(await r.arrayBuffer());if(b.length>=OW*OH/8)drawOled(b)}catch(e){}}"
     "setInterval(tick,1000);tick();"
+    "setInterval(tickOled,300);tickOled();"
     "</script></body></html>";
 
 static const char SETUP_HTML[] =
@@ -420,6 +433,25 @@ static esp_err_t telemetry_get(httpd_req_t *req)
     return httpd_resp_send(req, buf, n);
 }
 
+/* Raw OLED framebuffer (panel-native page format) so the dashboard can mirror
+ * the physical display on a canvas. */
+static esp_err_t display_get(httpd_req_t *req)
+{
+    if (check_auth(req) < ROLE_USER) {
+        return deny(req);
+    }
+    const size_t n = (size_t)hal_display_width() * hal_display_height() / 8u;
+    uint8_t *fb = malloc(n);
+    if (fb == NULL) {
+        return httpd_resp_send_500(req);
+    }
+    const size_t got = hal_display_snapshot(fb, n);
+    httpd_resp_set_type(req, "application/octet-stream");
+    const esp_err_t r = httpd_resp_send(req, (const char *)fb, got);
+    free(fb);
+    return r;
+}
+
 static esp_err_t forget_post(httpd_req_t *req)
 {
     if (check_auth(req) < ROLE_ADMIN) {
@@ -668,6 +700,7 @@ static void start_dashboard(void)
     register_uri("/", HTTP_GET, root_get);
     register_uri("/favicon.ico", HTTP_GET, favicon_get);
     register_uri("/api/telemetry", HTTP_GET, telemetry_get);
+    register_uri("/api/display", HTTP_GET, display_get);
     register_uri("/api/forget", HTTP_POST, forget_post);
     ESP_LOGI(TAG, "dashboard listening on port %d", CONFIG_ESPRESSO_DASHBOARD_PORT);
 }

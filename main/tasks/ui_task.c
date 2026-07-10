@@ -23,14 +23,19 @@
 #include "hal/hal_storage.h"
 #include "hal/hal_time.h"
 
-/* Bottom-band layout (see docs/display-layout.png): each boiler shows its
- * temperature and two element squares — empty = element off, filled = driven. */
-#define BAND_Y   47 /* top of the bottom band border   */
-#define TEMP_Y   52 /* baseline-ish row for the number */
-#define SQ_SIZE   5 /* heater-element square, px       */
-#define SQ_X     44 /* square x within a 64px cell     */
-#define SQ_LO_Y  49 /* lower element (top square)      */
-#define SQ_HI_Y  56 /* upper element (bottom square)   */
+/* Status-screen layout. A compact temperature bar lives in the panel's yellow
+ * strip (top 16 px): each boiler's number on the left of its half, its two
+ * heater-element squares stuck to the right edge (empty = element off, filled =
+ * driven). The machine status fills the blue area below (rows 16-63). */
+#define CELL_W     64 /* half the panel — one boiler block            */
+#define HDR_H      16 /* temperature-bar height (the yellow strip)    */
+#define HDR_TEMP_Y  4 /* temperature text row, in the yellow strip    */
+#define SQ_SIZE     5 /* heater-element square, px                     */
+#define SQ_LO_Y     2 /* lower element square (top)                    */
+#define SQ_HI_Y     9 /* upper element square (bottom)                 */
+#define SQ_PAD      2 /* square gap from the block's right edge        */
+#define MAIN_Y1    28 /* primary status line (blue area)              */
+#define MAIN_Y2    44 /* secondary detail line (blue area)            */
 
 /* Friendly one-word status for the top line. */
 static const char *status_text(machine_state_t s)
@@ -48,7 +53,8 @@ static const char *status_text(machine_state_t s)
     }
 }
 
-/* One boiler cell at x-origin @p x0: "NN\xB0C" plus two element squares. */
+/* One boiler block at x-origin @p x0 (0 = brew, 64 = steam): "NN\xB0C" on the
+ * left, its two element squares stuck to the block's right edge. */
 static void draw_boiler(uint8_t x0, bool sensor_ok, float temp,
                         bool lo_on, bool hi_on)
 {
@@ -58,14 +64,26 @@ static void draw_boiler(uint8_t x0, bool sensor_ok, float temp,
     } else {
         snprintf(buf, sizeof(buf), "--");
     }
-    uint8_t x = x0 + 4;
-    hal_display_text(x, TEMP_Y, buf);
+    uint8_t x = x0 + 2;
+    hal_display_text(x, HDR_TEMP_Y, buf);
     x += (uint8_t)(strlen(buf) * 6);       /* 5px glyph + 1px gap */
-    hal_display_rect(x, TEMP_Y, 3, 3, false); /* degree ring */
-    hal_display_text((uint8_t)(x + 4), TEMP_Y, "C");
-    /* Element indicators at a fixed offset so both cells line up. */
-    hal_display_rect((uint8_t)(x0 + SQ_X), SQ_LO_Y, SQ_SIZE, SQ_SIZE, lo_on);
-    hal_display_rect((uint8_t)(x0 + SQ_X), SQ_HI_Y, SQ_SIZE, SQ_SIZE, hi_on);
+    hal_display_rect(x, HDR_TEMP_Y, 3, 3, false); /* degree ring */
+    hal_display_text((uint8_t)(x + 4), HDR_TEMP_Y, "C");
+    /* Squares hard against the right edge of this boiler's half. */
+    const uint8_t sx = (uint8_t)(x0 + CELL_W - SQ_SIZE - SQ_PAD);
+    hal_display_rect(sx, SQ_LO_Y, SQ_SIZE, SQ_SIZE, lo_on);
+    hal_display_rect(sx, SQ_HI_Y, SQ_SIZE, SQ_SIZE, hi_on);
+}
+
+/* Draw @p s horizontally centred on the panel at row @p y. */
+static void draw_centered(const char *s, uint8_t y)
+{
+    const int w = (int)strlen(s) * 6; /* ~6 px per glyph */
+    int x = ((int)hal_display_width() - w) / 2;
+    if (x < 0) {
+        x = 0;
+    }
+    hal_display_text((uint8_t)x, y, s);
 }
 
 /* Apply edited settings to the live controllers and persist them. */
@@ -107,27 +125,35 @@ static void render(app_state_t *app, const ui_t *ui)
     hal_display_clear();
 
     if (screen == UI_STATUS) {
-        /* Top: machine status, or the shot timer / pump-cooldown when relevant. */
-        if (state == MACHINE_BREWING) {
-            hal_display_printf(0, 4, "Brewing  %.1fs", (double)shot_ms / 1000.0);
-        } else if (cooling) {
-            /* Pump is resting on its duty cycle; a shot is held off until this
-             * counts down. Round up so it never shows 0 while still locked. */
-            hal_display_printf(0, 4, "Pump Cooling %lus",
-                               (unsigned long)((cooldown_ms + 999) / 1000));
-        } else {
-            hal_display_printf(0, 4, "%s", status_text(state));
-        }
-
-        /* Bottom: both boiler temperatures with per-element heater squares. */
-        hal_display_rect(0, BAND_Y, hal_display_width(),
-                         (uint8_t)(hal_display_height() - BAND_Y), false);
-        hal_display_rect(64, BAND_Y, 1,
-                         (uint8_t)(hal_display_height() - BAND_Y), true);
+        /* Yellow strip: a framed temperature bar split into two boiler cells. */
+        hal_display_rect(0, 0, hal_display_width(), HDR_H, false);
+        hal_display_rect(CELL_W - 1, 0, 1, HDR_H, true);
         draw_boiler(0, bt.ok, bt.celsius,
                     heater[LOAD_BREW_LO], heater[LOAD_BREW_HI]);
-        draw_boiler(64, st.ok, st.celsius,
+        draw_boiler(CELL_W, st.ok, st.celsius,
                     heater[LOAD_STEAM_LO], heater[LOAD_STEAM_HI]);
+
+        /* Blue area: the machine's main status (shot timer / pump-cooldown when
+         * relevant), centred. */
+        char prim[24];
+        char sec[16];
+        sec[0] = '\0';
+        if (state == MACHINE_BREWING) {
+            snprintf(prim, sizeof(prim), "Brewing");
+            snprintf(sec, sizeof(sec), "%.1f s", (double)shot_ms / 1000.0);
+        } else if (cooling) {
+            /* Pump is resting on its duty cycle; round up so it never shows 0
+             * while still locked. */
+            snprintf(prim, sizeof(prim), "Pump Cooling");
+            snprintf(sec, sizeof(sec), "%lu s",
+                     (unsigned long)((cooldown_ms + 999) / 1000));
+        } else {
+            snprintf(prim, sizeof(prim), "%s", status_text(state));
+        }
+        draw_centered(prim, sec[0] != '\0' ? MAIN_Y1 : 34);
+        if (sec[0] != '\0') {
+            draw_centered(sec, MAIN_Y2);
+        }
     } else {
         char value[24];
         ui_item_value(ui, item, value, sizeof(value));

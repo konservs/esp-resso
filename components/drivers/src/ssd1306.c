@@ -134,3 +134,10 @@ bool ssd1306_ok(void)
 {
     return s_ok;
 }
+
+size_t ssd1306_snapshot(uint8_t *dst, size_t len)
+{
+    const size_t n = len < FB_SIZE ? len : FB_SIZE;
+    memcpy(dst, s_fb, n);
+    return n;
+}

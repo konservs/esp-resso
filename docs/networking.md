@@ -57,7 +57,12 @@ in `idf.py monitor`; with a static IP it's the address you configured.
   once per second and shows a **component self-check**: display and button-expander
   health, reservoir, and per-boiler temperature-sensor status (value + OK, or the
   decoded MAX31865 fault) and water level (Full / Filling / Low / Error), plus
-  machine state and live shot time/volume.
+  machine state and live shot time/volume. It also renders a **live mirror of the
+  OLED** on a canvas (4× zoom; the top 16 rows drawn yellow and the lower 48 blue,
+  matching a two-colour panel).
+- **`/api/display`** — the raw 1 bpp OLED framebuffer in panel-native page format
+  (`width*height/8` = 1024 bytes for the 128×64 panel), polled a few times a
+  second to drive the on-page mirror.
 - **`/api/telemetry`** — a JSON snapshot:
 
   ```json

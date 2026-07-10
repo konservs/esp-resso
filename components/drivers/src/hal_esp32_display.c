@@ -72,3 +72,8 @@ void hal_display_flush(void)
 {
     ssd1306_flush();
 }
+
+size_t hal_display_snapshot(uint8_t *buf, size_t len)
+{
+    return ssd1306_snapshot(buf, len);
+}

@@ -31,8 +31,11 @@
 #define PCF8574_I2C_ADDR  0x20  /* A2..A0 = GND; 0x38 for a PCF8574A part */
 
 /* --- Heaters: two elements per boiler (lower + upper), each on its own -----
- * zero-cross SSR, active-high via the ULN2003 buffer. Both elements of a boiler
- * follow the same PID duty (mirrored) today — see hal_esp32_actuators.c. Fit a
+ * zero-cross SSR, active-high via the ULN2003 buffer. Each element is switched
+ * independently: the PID sets one duty per boiler and the load guard maps it to
+ * the elements — the LOWER element is primary, the UPPER is a boost used only
+ * while warming up (or when the mains load budget allows). Co-enabled elements
+ * share the same duty. See core/load_guard.c and hal_esp32_actuators.c. Fit a
  * ~10 kOhm pulldown on every ULN2003 heater input so the elements stay OFF
  * through the boot window; GPIO14 especially idles with a weak INTERNAL PULL-UP
  * at reset, so its external pulldown is mandatory to not energise a heater. */

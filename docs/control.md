@@ -6,8 +6,9 @@ All control logic is in `core/` and unit-tested in `tests/`.
 
 Each boiler is regulated by an independent PID ([`core/pid.c`](../components/core/src/pid.c))
 wrapped by a boiler controller ([`core/boiler.c`](../components/core/src/boiler.c)).
-The PID output is a normalised **heater duty in [0, 1]** driven onto the SSR via
-slow-PWM.
+The PID output is **one normalised heater duty in [0, 1] per boiler**, realised as
+a slow-PWM window on that boiler's heater element(s) — see
+[Heater elements & SSR drive](#heater-elements--ssr-drive) below.
 
 Features that matter for a boiler:
 
@@ -61,6 +62,36 @@ The elements are addressed individually through the HAL
 and is unit-tested in [`tests/test_load_guard.c`](../tests/test_load_guard.c).
 Set `max_active_heaters` to **4** to lift the cap — e.g. on a 230 V circuit that
 can comfortably carry all four elements.
+
+### Heater elements & SSR drive
+
+Each boiler has two heating elements — a **lower (LO)** and an **upper (HI)** — and
+**each is on its own zero-cross solid-state relay**, switched active-high through
+the ULN2003 buffer at 12 V. The four SSR pins (`PIN_SSR_BREW_LO/HI`,
+`PIN_SSR_STEAM_LO/HI`) are listed in
+[`pins.h`](../components/drivers/include/drivers/pins.h) / [hardware.md](hardware.md).
+
+The LO and HI SSRs are **not** wired together and are not a single logical heater:
+
+- **The PID computes one duty per boiler.** The load guard then maps that duty
+  onto the boiler's elements — **LO is the primary element** (filled first), **HI
+  is a boost** added only while the boiler is warming and the load budget allows.
+  So a boiler running both elements drives them at the **same** duty (mirrored),
+  and a boiler running one always uses **LO**.
+- **Drive is slow-PWM.** One periodic timer runs a shared 1 s window (100 steps ×
+  10 ms) in [`hal_esp32_actuators.c`](../components/drivers/src/hal_esp32_actuators.c);
+  each element switches according to *its own* commanded duty. The windows are
+  phase-aligned (one step counter), and each on/off is meant to land on a mains
+  zero-crossing — drive the transitions from a zero-cross interrupt for tighter
+  synchronisation.
+- **Net effect:** holding temperature modulates a single 400 W element (finer
+  control and lower peak current than pulsing 800 W), while a cold start adds the
+  second element for 800 W of heat-up power. This is exactly what the two
+  per-boiler squares on the display show (empty = element off, filled = driven).
+- **Boot safety:** every ULN2003 heater input needs an external pulldown so the
+  SSRs stay off during the reset window — mandatory on GPIO 14 (steam-HI), which
+  idles with a weak internal pull-up. See [hardware.md](hardware.md) and
+  [safety.md](safety.md).
 
 ## Brew profiles
 

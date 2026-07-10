@@ -9,6 +9,7 @@
 #define ESPRESSO_DRIVERS_SSD1306_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "esp_err.h"
@@ -28,5 +29,10 @@ void ssd1306_flush(void);
 
 /** True if the last panel write over I2C succeeded (false => OLED not responding). */
 bool ssd1306_ok(void);
+
+/** Copy the framebuffer (SSD1306 page format: 1 bpp, 8 stacked rows per byte,
+ *  128 bytes per page) into @p dst; returns the number of bytes copied. Lets a
+ *  remote UI mirror the panel. */
+size_t ssd1306_snapshot(uint8_t *dst, size_t len);
 
 #endif /* ESPRESSO_DRIVERS_SSD1306_H */
