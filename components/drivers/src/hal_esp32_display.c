@@ -68,6 +68,20 @@ void hal_display_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, bool filled)
     ssd1306_fill_rect(x + w - 1, y, 1, h, true);     /* right  */
 }
 
+void hal_display_bitmap(uint8_t x, uint8_t y, uint8_t w, uint8_t h,
+                        const uint8_t *bits)
+{
+    const uint8_t stride = (uint8_t)((w + 7) / 8);
+    for (uint8_t row = 0; row < h; row++) {
+        for (uint8_t col = 0; col < w; col++) {
+            const uint8_t byte = bits[row * stride + (col >> 3)];
+            if (byte & (uint8_t)(0x80 >> (col & 7))) {
+                ssd1306_set_pixel(x + col, y + row, true);
+            }
+        }
+    }
+}
+
 void hal_display_flush(void)
 {
     ssd1306_flush();

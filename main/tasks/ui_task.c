@@ -37,6 +37,21 @@
 #define MAIN_Y1    28 /* primary status line (blue area)              */
 #define MAIN_Y2    44 /* secondary detail line (blue area)            */
 
+/* Water-level drop icon (7x10, MSB = leftmost) shown left of the temperature:
+ *   FULL  = solid drop  (water present),
+ *   EMPTY = outline     (low / filling),
+ *   FAULT = outline with a diagonal slash (level sensor failed). */
+#define DROP_W  7
+#define DROP_H 10
+#define DROP_Y  3 /* row within the yellow strip */
+#define DROP_X  2 /* x within a boiler cell      */
+static const uint8_t DROP_FULL[DROP_H] =
+    { 0x10, 0x38, 0x38, 0x7C, 0x7C, 0xFE, 0xFE, 0xFE, 0x7C, 0x38 };
+static const uint8_t DROP_EMPTY[DROP_H] =
+    { 0x10, 0x28, 0x28, 0x44, 0x44, 0x82, 0x82, 0x82, 0x44, 0x38 };
+static const uint8_t DROP_FAULT[DROP_H] =
+    { 0x12, 0x2C, 0x2C, 0x4C, 0x54, 0x92, 0xA2, 0xC2, 0x44, 0xB8 };
+
 /* Friendly one-word status for the top line. */
 static const char *status_text(machine_state_t s)
 {
@@ -53,18 +68,24 @@ static const char *status_text(machine_state_t s)
     }
 }
 
-/* One boiler block at x-origin @p x0 (0 = brew, 64 = steam): "NN\xB0C" on the
- * left, its two element squares stuck to the block's right edge. */
-static void draw_boiler(uint8_t x0, bool sensor_ok, float temp,
-                        bool lo_on, bool hi_on)
+/* One boiler block at x-origin @p x0 (0 = brew, 64 = steam): a water-level drop
+ * icon, then "NN\xB0C", with the two element squares stuck to the right edge. */
+static void draw_boiler(uint8_t x0, level_status_t level, bool sensor_ok,
+                        float temp, bool lo_on, bool hi_on)
 {
+    /* Water-level drop on the left: full / empty (low) / crossed (fault). */
+    const uint8_t *drop = (level == LVL_FULL)  ? DROP_FULL
+                        : (level == LVL_ERROR) ? DROP_FAULT
+                        :                        DROP_EMPTY;
+    hal_display_bitmap((uint8_t)(x0 + DROP_X), DROP_Y, DROP_W, DROP_H, drop);
+
     char buf[6];
     if (sensor_ok) {
         snprintf(buf, sizeof(buf), "%.0f", (double)temp);
     } else {
         snprintf(buf, sizeof(buf), "--");
     }
-    uint8_t x = x0 + 2;
+    uint8_t x = (uint8_t)(x0 + DROP_X + DROP_W + 2); /* after the drop icon */
     hal_display_text(x, HDR_TEMP_Y, buf);
     x += (uint8_t)(strlen(buf) * 6);       /* 5px glyph + 1px gap */
     hal_display_rect(x, HDR_TEMP_Y, 3, 3, false); /* degree ring */
@@ -107,6 +128,7 @@ static void render(app_state_t *app, const ui_t *ui)
     bool cooling;
     uint32_t cooldown_ms;
     bool heater[LOAD_HEATER_COUNT];
+    level_status_t brew_level, steam_level;
     ui_screen_t screen = ui_screen(ui);
     ui_item_t item = ui_item(ui);
 
@@ -117,6 +139,8 @@ static void render(app_state_t *app, const ui_t *ui)
     shot_ms = app->shot_elapsed_ms;
     cooling = app->pump_cooling;
     cooldown_ms = app->pump_cooldown_ms;
+    brew_level = app->brew_level;
+    steam_level = app->steam_level;
     for (int i = 0; i < LOAD_HEATER_COUNT; i++) {
         heater[i] = app->heater_active[i];
     }
@@ -128,9 +152,9 @@ static void render(app_state_t *app, const ui_t *ui)
         /* Yellow strip: a framed temperature bar split into two boiler cells. */
         hal_display_rect(0, 0, hal_display_width(), HDR_H, false);
         hal_display_rect(CELL_W - 1, 0, 1, HDR_H, true);
-        draw_boiler(0, bt.ok, bt.celsius,
+        draw_boiler(0, brew_level, bt.ok, bt.celsius,
                     heater[LOAD_BREW_LO], heater[LOAD_BREW_HI]);
-        draw_boiler(CELL_W, st.ok, st.celsius,
+        draw_boiler(CELL_W, steam_level, st.ok, st.celsius,
                     heater[LOAD_STEAM_LO], heater[LOAD_STEAM_HI]);
 
         /* Blue area: the machine's main status (shot timer / pump-cooldown when

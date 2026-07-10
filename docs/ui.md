@@ -10,13 +10,17 @@ are abstractions, and all interaction logic is portable, host-tested `core` code
 A 128×64 I2C **SSD1306 OLED** (address 0x3C) shows:
 
 - **Status screen:** a compact **temperature bar in the panel's yellow strip**
-  (top 16 px) — each boiler's temperature on the left of its half, with the
-  boiler's **two heater-element squares** stuck to the right edge (empty = element
-  off, filled = being driven, including partial PID duty) — and the **machine
-  status in the blue area** below (state, or the live shot timer while brewing, or
-  a pump-cooldown countdown). The squares make the load guard visible: during
-  warm-up the steam boiler's upper square stays empty while the brew boiler runs
-  both (see [control.md](control.md)).
+  (top 16 px) — each boiler shows a **water-level drop icon**, then its
+  temperature, with the boiler's **two heater-element squares** stuck to the
+  right edge — and the **machine status in the blue area** below (state, or the
+  live shot timer while brewing, or a pump-cooldown countdown).
+  - The **drop icon** (left of the number) reflects the boiler's water level:
+    a **solid drop** = full, an **outline drop** = low/filling, and a **crossed
+    (slashed) drop** = level-sensor fault (`LVL_ERROR`).
+  - The **element squares** are empty when that element is off and filled when
+    it's being driven (including partial PID duty), which makes the load guard
+    visible: during warm-up the steam boiler's upper square stays empty while the
+    brew boiler runs both (see [control.md](control.md)).
 - **Config screens:** the selected menu item and its value.
 
 `hal_display` is a small, panel-agnostic text/graphics API

@@ -45,6 +45,12 @@ void hal_display_progress(uint8_t x, uint8_t y, uint8_t w, uint8_t h, float frac
  *  the per-element heater indicators (empty = off, filled = driven). */
 void hal_display_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, bool filled);
 
+/** Blit a 1-bpp bitmap at (@p x, @p y): @p bits is row-major, MSB = leftmost
+ *  pixel, each row padded to a whole byte ((w+7)/8 bytes/row). Set bits draw;
+ *  clear bits are left untouched (transparent). Used for small status icons. */
+void hal_display_bitmap(uint8_t x, uint8_t y, uint8_t w, uint8_t h,
+                        const uint8_t *bits);
+
 /** Push the framebuffer to the panel over I2C. */
 void hal_display_flush(void);
 
