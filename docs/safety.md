@@ -24,18 +24,23 @@ standing between a fault and a hazard.
    cuts all heaters. It trips on:
    - **Over-temperature** — either boiler exceeds an absolute cutoff well above
      the highest setpoint.
-   - **Sensor fault** — the MAX31865 reports an open/short, so the temperature
+   - **Sensor fault** — the MAX31865 reports an open/short, *or* the reading is
+     physically implausible (a near-zero resistance from an absent/silent
+     front-end, which would otherwise look like ~−247 °C), so the temperature
      can't be trusted; better to stop heating than to fly blind.
    - **Heat timeout / runaway** — a heater driven continuously without the
      temperature making progress, which indicates a dry boiler, a dead element,
      or a *welded SSR contact*.
 
-3. **Control-loop hygiene:** PID output is clamped to [0, 1]; auto-fill is gated
-   on the reservoir having water (dry-fire protection) and is disabled during a
-   fault; a **mains load guard** caps how many heater elements run at once so the
-   heaters + pump can't overload the supply circuit (see
-   [control.md](control.md)); and a **pump duty-cycle guard** stops a vibratory
-   pump being run past its rating.
+3. **Control-loop hygiene:** PID output is clamped to [0, 1]; a **per-boiler
+   dry-fire interlock** keeps that boiler's heaters fully off whenever its water
+   level is not confirmed present (low, filling, or a faulted level reading),
+   until auto-fill covers the probe again — the proactive counterpart to the
+   heat-timeout backstop; auto-fill itself is gated on the reservoir having water
+   and is disabled during a fault; a **mains load guard** caps how many heater
+   elements run at once so the heaters + pump can't overload the supply circuit
+   (see [control.md](control.md)); and a **pump duty-cycle guard** stops a
+   vibratory pump being run past its rating.
 
 ## Fail-safe defaults
 

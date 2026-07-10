@@ -140,10 +140,16 @@ Behind the unchanged `hal_level_present()`
 2. For a burst at frequency *f*, alternate with `ENABLE` gating each flip:
    assert `REVERSE=0` (sample `SENSE_POS`), all-off gap, `REVERSE=1` (sample
    `SENSE_NEG`), all-off gap. Keep + and − dwell **equal** → zero net DC.
-3. `wet` requires **both** `SENSE_POS` (+ halves) **and** `SENSE_NEG` (− halves)
-   to log ≥ `LEVEL_WET_MIN_HITS`.
-4. Optionally repeat at a second *f* and require agreement (noise rejection).
-5. `ENABLE` off between reads (idle). The control loop debounces so
+3. Each half-cycle is scored **differentially**: it only counts when the driven
+   direction's opto conducts **and the other one does not**. Genuine water
+   forward-biases just one sense opto per polarity (`SENSE_POS` alone on + halves,
+   `SENSE_NEG` alone on − halves); *both* lines asserting at once means a rod
+   short, common-mode noise, or a floating/disconnected sense front-end — not
+   water — and is rejected rather than read as "full".
+4. `wet` then requires **both** `SENSE_POS` (+ halves) **and** `SENSE_NEG`
+   (− halves) to log ≥ `LEVEL_WET_MIN_HITS`.
+5. Optionally repeat at a second *f* and require agreement (noise rejection).
+6. `ENABLE` off between reads (idle). The control loop debounces so
    boiling/splashing doesn't chatter the autofill valve.
 
 Autofill lives in `control_task` ([control.md](control.md)): it opens the fill

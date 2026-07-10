@@ -24,3 +24,12 @@ temp_c_t rtd_resistance_to_celsius(float resistance_ohms, float r0_ohms)
 
     return (temp_c_t)((-RTD_CVD_A + sqrtf(disc)) / (2.0f * RTD_CVD_B));
 }
+
+bool rtd_resistance_plausible(float resistance_ohms, float r0_ohms)
+{
+    if (r0_ohms <= 0.0f) {
+        return false;
+    }
+    const float ratio = resistance_ohms / r0_ohms;
+    return ratio >= RTD_PLAUSIBLE_MIN_RATIO && ratio <= RTD_PLAUSIBLE_MAX_RATIO;
+}

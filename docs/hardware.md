@@ -140,7 +140,10 @@ protection, and the per-rail power budget: **[power.md](power.md)**.
 - **Temperature:** PT100 over MAX31865 (SPI, mode 1). Resistance→temperature
   conversion is the portable `core/rtd.c` (Callendar–Van Dusen), unit-tested on
   the host. Sensor open/short is reported via the MAX31865 fault bit and becomes
-  a safety trip.
+  a safety trip. A **near-zero or absurd resistance** — an absent/silent
+  front-end whose registers read all-zero, which would otherwise convert to a
+  plausible-looking ~−247 °C — is also rejected (plausibility band in
+  `rtd.c`) and reported as a sensor fault rather than trusted.
 - **Flow:** Hall flow meter on a pulse counter (`pulse_cnt`). Calibrate
   `FLOW_PULSES_PER_ML` in `hal_esp32_sensors.c` against a measured pour.
 - **Level:** boiler rods use **opto-isolated bipolar ±12 V conductivity sensing**.

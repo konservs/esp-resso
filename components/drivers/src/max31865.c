@@ -90,6 +90,20 @@ bool max31865_read_celsius(max31865_t *dev, temp_c_t *out_c, uint8_t *out_fault)
 
     const uint16_t adc = raw >> 1; /* 15-bit ratio */
     const float resistance = ((float)adc * dev->rref) / 32768.0f;
+
+    /* A near-zero (or absurdly high) resistance is not a real temperature — it's
+     * a dead/absent front-end returning all-zero registers (which would convert
+     * to a bogus ~-247 C and read as valid), or an open/short the chip's own
+     * detector didn't latch. Report it as a fault so the safety supervisor cuts
+     * the heaters instead of trusting it. Reuse the MAX31865 RTD low/high
+     * threshold bits so the fault decodes as "out of range". */
+    if (!rtd_resistance_plausible(resistance, dev->rnominal)) {
+        if (out_fault != NULL) {
+            *out_fault = (resistance < dev->rnominal) ? 0x40 : 0x80;
+        }
+        return false;
+    }
+
     *out_c = rtd_resistance_to_celsius(resistance, dev->rnominal);
     return true;
 }

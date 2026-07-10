@@ -31,8 +31,9 @@ static void drain_events(app_state_t *app)
 }
 
 /* Classify a boiler probe for the diagnostics view, mirroring the fill logic. */
-static level_status_t level_of(bool full, bool filling, bool reservoir_ok)
+static level_status_t level_of(bool full, bool filling, bool fault, bool reservoir_ok)
 {
+    if (fault)         return LVL_ERROR; /* sense path shorted/stuck — untrusted */
     if (full)          return LVL_FULL;
     if (filling)       return LVL_FILLING;
     if (!reservoir_ok) return LVL_ERROR; /* low but no water to fill from */
@@ -50,10 +51,14 @@ void control_task(void *arg)
     bool prev_ready = false;
     machine_state_t prev_state = MACHINE_BOOT;
 
-    /* Debounce the level probes so the fill valves do not chatter. */
-    debounce_t db_brew, db_steam;
+    /* Debounce the level probes so the fill valves do not chatter. The "full"
+     * debouncers start true (assume full at boot so we never fill blind); the
+     * "fault" ones start false. */
+    debounce_t db_brew, db_steam, db_brew_fault, db_steam_fault;
     debounce_init(&db_brew, 3, true);
     debounce_init(&db_steam, 3, true);
+    debounce_init(&db_brew_fault, 3, false);
+    debounce_init(&db_steam_fault, 3, false);
 
     for (;;) {
         vTaskDelayUntil(&last, period);
@@ -62,8 +67,12 @@ void control_task(void *arg)
         const hal_temp_reading_t bt = hal_temp_read(HAL_BOILER_BREW);
         const hal_temp_reading_t st = hal_temp_read(HAL_BOILER_STEAM);
         float flow_ml = hal_flow_ml();
-        const bool brew_full = debounce_update(&db_brew, hal_level_present(HAL_LEVEL_BREW));
-        const bool steam_full = debounce_update(&db_steam, hal_level_present(HAL_LEVEL_STEAM));
+        const hal_level_state_t brew_lvl = hal_level_read(HAL_LEVEL_BREW);
+        const hal_level_state_t steam_lvl = hal_level_read(HAL_LEVEL_STEAM);
+        const bool brew_full = debounce_update(&db_brew, brew_lvl == HAL_LEVEL_WET);
+        const bool steam_full = debounce_update(&db_steam, steam_lvl == HAL_LEVEL_WET);
+        const bool brew_fault = debounce_update(&db_brew_fault, brew_lvl == HAL_LEVEL_FAULT);
+        const bool steam_fault = debounce_update(&db_steam_fault, steam_lvl == HAL_LEVEL_FAULT);
         const bool reservoir_ok = hal_level_present(HAL_LEVEL_RESERVOIR);
         const esp_ms_t now = hal_time_ms();
 
@@ -87,6 +96,19 @@ void control_task(void *arg)
             brew_duty = bt.ok ? bo.heater_duty : 0.0f;
             steam_duty = st.ok ? so.heater_duty : 0.0f;
             both_ready = bt.ok && st.ok && bo.at_setpoint && so.at_setpoint;
+
+            /* Dry-fire interlock: never energise a boiler's heaters unless its
+             * water level is confirmed present. A low/uncovered probe (LVL_LOW /
+             * LVL_FILLING) or a faulted level reading (LVL_ERROR) forces that
+             * boiler fully off until auto-fill covers the probe again. This is
+             * the proactive guard; the safety supervisor's heat-timeout is only
+             * the slow backstop. */
+            if (!brew_full || brew_fault) {
+                brew_duty = 0.0f;
+            }
+            if (!steam_full || steam_fault) {
+                steam_duty = 0.0f;
+            }
 
             /* Cap simultaneous heater elements to the mains budget: brew boiler
              * has priority (both elements while warming, lower-only once ready),
@@ -131,12 +153,14 @@ void control_task(void *arg)
         }
         app->both_ready = both_ready;
 
-        /* Auto-fill decision (reused to drive the valves below) + diagnostics. */
+        /* Auto-fill decision (reused to drive the valves below) + diagnostics.
+         * A faulted probe holds the fill valve shut: we can't trust the reading,
+         * and opening the valve on a bad "dry" reading risks overfilling. */
         const bool can_fill = (state != MACHINE_FAULT) && reservoir_ok;
-        const bool brew_filling = can_fill && !brew_full;
-        const bool steam_filling = can_fill && !steam_full;
-        app->brew_level = level_of(brew_full, brew_filling, reservoir_ok);
-        app->steam_level = level_of(steam_full, steam_filling, reservoir_ok);
+        const bool brew_filling = can_fill && !brew_full && !brew_fault;
+        const bool steam_filling = can_fill && !steam_full && !steam_fault;
+        app->brew_level = level_of(brew_full, brew_filling, brew_fault, reservoir_ok);
+        app->steam_level = level_of(steam_full, steam_filling, steam_fault, reservoir_ok);
         app->reservoir_present = reservoir_ok;
 
         prev_state = state;

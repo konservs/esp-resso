@@ -161,3 +161,10 @@ the commanded duty — the conservative, pump-protecting choice.
 the probe is uncovered, stopping when covered — gated on the reservoir having
 water and the machine not being faulted (dry-fire protection). The generic
 hysteresis helper is in [`core/filter.c`](../components/core/src/filter.c).
+
+**Dry-fire interlock.** The same debounced level also gates the *heaters*: a
+boiler is only heated while its probe reads covered. If it reads low/uncovered
+(including while filling) or the level read is faulted (`LVL_ERROR`), that
+boiler's heaters are forced fully off until auto-fill restores the level — so an
+empty or unreadable boiler is never energised. This is proactive; the safety
+supervisor's heat-timeout ([safety.md](safety.md)) is only the slow backstop.

@@ -94,6 +94,11 @@ void hal_flow_reset(void)
 
 #define LEVEL_CYCLES        4    /* +/- pairs per burst                        */
 #define LEVEL_WET_MIN_HITS  3    /* of LEVEL_CYCLES, per direction => that dir wet */
+/* Both sense lines conducting in the same half-cycle is impossible for real
+ * water (only the driven direction's opto is forward-biased). If it happens on
+ * most half-cycles across a full read (2 bursts x LEVEL_CYCLES x 2 dirs = 16),
+ * the sense path is shorted / stuck / common-mode-coupled -> report a fault. */
+#define LEVEL_FAULT_MIN_HITS 12  /* of 16 half-cycles both-conducting => fault */
 #define LEVEL_DWELL_FAST_US 250  /* ~1.7 kHz probe (also = opto/settle time)   */
 #define LEVEL_DWELL_SLOW_US 600  /* ~0.8 kHz probe (second frequency)          */
 #define LEVEL_GAP_US        50   /* idle gap between polarity flips            */
@@ -148,14 +153,27 @@ espresso_result_t hal_level_init(void)
 }
 
 /* One burst at a given dwell (excitation frequency): alternate +/-, counting the
- * conducting half-cycles per direction. Leaves the drive idle. */
-static void level_burst(int select, int dwell_us, int *pos_hits, int *neg_hits)
+ * conducting half-cycles per direction. Leaves the drive idle.
+ *
+ * The check is differential: a half-cycle only counts when the DRIVEN direction
+ * conducts and the opposite one does NOT. Genuine water forward-biases just one
+ * sense opto per polarity (the other is reverse-biased), so a real probe asserts
+ * SENSE_POS alone under +drive and SENSE_NEG alone under -drive. Both lines
+ * asserting at once is not water — it's a short across the rod, common-mode
+ * noise, or a floating/disconnected sense front-end (see docs/level-sensing.md)
+ * — and is rejected here rather than being read as "full". */
+static void level_burst(int select, int dwell_us, int *pos_hits, int *neg_hits,
+                        int *short_hits)
 {
-    int ph = 0, nh = 0;
+    int ph = 0, nh = 0, sh = 0;
     for (int i = 0; i < LEVEL_CYCLES; i++) {
         level_drive(select, LEVEL_POS);
         esp_rom_delay_us(dwell_us);
-        if (level_conducting(PIN_LEVEL_SENSE_POS)) {
+        const bool p_pos = level_conducting(PIN_LEVEL_SENSE_POS);
+        const bool n_pos = level_conducting(PIN_LEVEL_SENSE_NEG);
+        if (p_pos && n_pos) {
+            sh++;              /* both conduct under +drive => implausible */
+        } else if (p_pos) {
             ph++;
         }
         level_idle();
@@ -163,7 +181,11 @@ static void level_burst(int select, int dwell_us, int *pos_hits, int *neg_hits)
 
         level_drive(select, LEVEL_NEG);
         esp_rom_delay_us(dwell_us);
-        if (level_conducting(PIN_LEVEL_SENSE_NEG)) {
+        const bool p_neg = level_conducting(PIN_LEVEL_SENSE_POS);
+        const bool n_neg = level_conducting(PIN_LEVEL_SENSE_NEG);
+        if (p_neg && n_neg) {
+            sh++;              /* both conduct under -drive => implausible */
+        } else if (n_neg) {
             nh++;
         }
         level_idle();
@@ -171,14 +193,16 @@ static void level_burst(int select, int dwell_us, int *pos_hits, int *neg_hits)
     }
     *pos_hits = ph;
     *neg_hits = nh;
+    *short_hits = sh;
 }
 
-bool hal_level_present(hal_level_id_t level)
+hal_level_state_t hal_level_read(hal_level_id_t level)
 {
     if (level == HAL_LEVEL_RESERVOIR) {
         /* Float switch closed to GND => water present. Adjust polarity to
-         * match your switch wiring. */
-        return gpio_get_level(PIN_LEVEL_RESERVOIR) == 0;
+         * match your switch wiring. No differential path, so it can't fault. */
+        return gpio_get_level(PIN_LEVEL_RESERVOIR) == 0 ? HAL_LEVEL_WET
+                                                        : HAL_LEVEL_DRY;
     }
 
     int select;
@@ -186,18 +210,31 @@ bool hal_level_present(hal_level_id_t level)
     case HAL_LEVEL_BREW:  select = LEVEL_SELECT_BREW;  break;
     case HAL_LEVEL_STEAM: select = LEVEL_SELECT_STEAM; break;
     default:
-        return true; /* unknown probe: fail safe against overfilling */
+        return HAL_LEVEL_WET; /* unknown probe: fail safe against overfilling */
     }
 
     /* Probe at two frequencies; require BOTH directions to conduct at BOTH.
      * Genuine water passes all four counts; one-directional leakage or a
      * fixed-frequency machine noise source does not. Relax to a single burst /
      * one direction here if bench calibration shows this is too strict. */
-    int pf, nf, ps, ns;
-    level_burst(select, LEVEL_DWELL_FAST_US, &pf, &nf);
-    level_burst(select, LEVEL_DWELL_SLOW_US, &ps, &ns);
+    int pf, nf, sf, ps, ns, ss;
+    level_burst(select, LEVEL_DWELL_FAST_US, &pf, &nf, &sf);
+    level_burst(select, LEVEL_DWELL_SLOW_US, &ps, &ns, &ss);
     level_idle();
 
-    return pf >= LEVEL_WET_MIN_HITS && nf >= LEVEL_WET_MIN_HITS &&
-           ps >= LEVEL_WET_MIN_HITS && ns >= LEVEL_WET_MIN_HITS;
+    /* Both sense lines conducting together on most half-cycles is not a water
+     * reading at all — flag it so the caller stops filling rather than reading
+     * "dry" and opening the valve on a broken sensor. */
+    if (sf + ss >= LEVEL_FAULT_MIN_HITS) {
+        return HAL_LEVEL_FAULT;
+    }
+
+    const bool wet = pf >= LEVEL_WET_MIN_HITS && nf >= LEVEL_WET_MIN_HITS &&
+                     ps >= LEVEL_WET_MIN_HITS && ns >= LEVEL_WET_MIN_HITS;
+    return wet ? HAL_LEVEL_WET : HAL_LEVEL_DRY;
+}
+
+bool hal_level_present(hal_level_id_t level)
+{
+    return hal_level_read(level) == HAL_LEVEL_WET;
 }

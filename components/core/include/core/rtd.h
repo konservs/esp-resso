@@ -20,6 +20,15 @@ extern "C" {
 #define RTD_PT100_R0  100.0f
 #define RTD_PT1000_R0 1000.0f
 
+/** Plausible resistance band for a working probe, as a fraction of R0. A reading
+ *  outside this is not a real temperature: a near-zero value means a dead/absent
+ *  front-end (which would otherwise convert to a bogus ~-247 C), and a very high
+ *  one an open/short the MAX31865's own detector missed. The band spans roughly
+ *  -125..+266 C for a PT100 — far outside anything an espresso machine sees — so
+ *  a genuine reading never trips it. The driver treats out-of-band as a fault. */
+#define RTD_PLAUSIBLE_MIN_RATIO 0.5f
+#define RTD_PLAUSIBLE_MAX_RATIO 2.0f
+
 /**
  * @brief Convert an RTD resistance to a temperature in degrees Celsius.
  *
@@ -33,6 +42,15 @@ extern "C" {
  * @return Temperature in degrees Celsius.
  */
 temp_c_t rtd_resistance_to_celsius(float resistance_ohms, float r0_ohms);
+
+/**
+ * @brief Is @p resistance_ohms a physically plausible reading for this probe?
+ * @param resistance_ohms Measured RTD resistance.
+ * @param r0_ohms         Nominal resistance at 0 C (e.g. ::RTD_PT100_R0).
+ * @return false for a near-zero / absurdly-high resistance (a dead front-end or
+ *         undetected open/short); true for anything in the working band.
+ */
+bool rtd_resistance_plausible(float resistance_ohms, float r0_ohms);
 
 #ifdef __cplusplus
 }
