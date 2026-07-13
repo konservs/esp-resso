@@ -51,6 +51,12 @@ void control_task(void *arg)
     bool prev_ready = false;
     machine_state_t prev_state = MACHINE_BOOT;
 
+    /* Flow-rate estimate: differentiate the accumulated volume and low-pass it
+     * (the 5 pulses/ml meter is coarse at the 100 ms loop rate). */
+    float prev_flow_ml = 0.0f;
+    float flow_rate = 0.0f;
+    const float FLOW_RATE_ALPHA = 0.25f;
+
     /* Debounce the level probes so the fill valves do not chatter. The "full"
      * debouncers start true (assume full at boot so we never fill blind); the
      * "fault" ones start false. */
@@ -137,6 +143,16 @@ void control_task(void *arg)
             brew_stop(&app->brew);
         }
 
+        /* Live flow rate: differentiate the accumulated volume and low-pass it.
+         * A shot resets the counter, so clamp the negative step to zero. */
+        float dv = flow_ml - prev_flow_ml;
+        prev_flow_ml = flow_ml;
+        if (dv < 0.0f) {
+            dv = 0.0f;
+        }
+        flow_rate += FLOW_RATE_ALPHA * (dv / dt_s - flow_rate);
+        app->flow_rate_ml_s = flow_rate;
+
         /* Advance the pump's duty-cycle model with this cycle's command. It
          * only fills while brewing (the sole state that drives the pump) and
          * drains in every other state, so idle time counts as rest. */
@@ -162,6 +178,8 @@ void control_task(void *arg)
         app->brew_level = level_of(brew_full, brew_filling, brew_fault, reservoir_ok);
         app->steam_level = level_of(steam_full, steam_filling, steam_fault, reservoir_ok);
         app->reservoir_present = reservoir_ok;
+        app->valve_brew_open = brew_filling;
+        app->valve_steam_open = steam_filling;
 
         prev_state = state;
         xSemaphoreGive(app->lock);

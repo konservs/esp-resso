@@ -57,9 +57,10 @@ in `idf.py monitor`; with a static IP it's the address you configured.
   once per second and shows a **component self-check**: display and button-expander
   health, reservoir, and per-boiler temperature-sensor status (value + OK, or the
   decoded MAX31865 fault) and water level (Full / Filling / Low / Error), plus
-  machine state and live shot time/volume. It also renders a **live mirror of the
-  OLED** on a canvas (4× zoom; the top 16 rows drawn yellow and the lower 48 blue,
-  matching a two-colour panel).
+  machine state, live shot time/volume, **pump duty-cycle status, both fill-solenoid
+  states (Open/Closed), and the live flow rate (ml/s)**. It also renders a **live
+  mirror of the OLED** on a canvas (4× zoom; the top 16 rows drawn yellow and the
+  lower 48 blue, matching a two-colour panel).
 - **`/api/display`** — the raw 1 bpp OLED framebuffer in panel-native page format
   (`width*height/8` = 1024 bytes for the 128×64 panel), polled a few times a
   second to drive the on-page mirror.
@@ -67,16 +68,22 @@ in `idf.py monitor`; with a static IP it's the address you configured.
 
   ```json
   {
-    "state": "READY", "safety": "OK", "ready": true,
+    "state": "READY", "safety": "OK", "ready": true, "role": "admin",
     "display": true, "buttons": true, "reservoir": true,
     "brew":  { "t": 92.9,  "sp": 93.0,  "ok": true, "fault": 0, "level": 0 },
     "steam": { "t": 124.6, "sp": 125.0, "ok": true, "fault": 0, "level": 0 },
-    "shot":  { "ml": 0.0, "ms": 0 }
+    "shot":  { "ml": 0.0, "ms": 0 },
+    "pump":  { "cooling": false, "ms": 0 },
+    "fill":  { "brew": false, "steam": false },
+    "flow":  { "mls": 0.0 }
   }
   ```
 
   `fault` is the MAX31865 fault byte when `ok` is false (`255` = no SPI comms);
-  `level` is `0`=Full, `1`=Filling, `2`=Low, `3`=Error.
+  `level` is `0`=Full, `1`=Filling, `2`=Low, `3`=Error. `pump.cooling` +
+  `pump.ms` are the duty-cycle guard (rest remaining); `fill.brew`/`fill.steam`
+  are the auto-fill solenoid commands; `flow.mls` is the smoothed flow rate in
+  ml/s.
 
 The data comes from `app_get_telemetry()`
 ([`main/app_main.c`](../main/app_main.c)), which copies a consistent snapshot

@@ -57,6 +57,7 @@ typedef struct {
                                                 *   order); for the UI indicators. */
     float    shot_volume_ml;
     uint32_t shot_elapsed_ms;
+    float    flow_rate_ml_s;   /**< Live flow rate (smoothed), ml/s.          */
     bool     both_ready;
     bool     pump_cooling;     /**< Pump duty-cycle guard is resting.         */
     uint32_t pump_cooldown_ms; /**< Rest remaining before a shot can start.   */
@@ -65,6 +66,8 @@ typedef struct {
     level_status_t brew_level;
     level_status_t steam_level;
     bool     reservoir_present;
+    bool     valve_brew_open;  /**< Brew auto-fill solenoid commanded open.   */
+    bool     valve_steam_open; /**< Steam auto-fill solenoid commanded open.  */
 
     SemaphoreHandle_t lock;   /**< Guards this struct.               */
     QueueHandle_t     events; /**< machine_event_t produced by tasks. */
@@ -90,6 +93,7 @@ typedef struct {
     bool     both_ready;
     float    shot_volume_ml;
     uint32_t shot_elapsed_ms;
+    float    flow_rate_ml_s;   /**< Live flow rate (smoothed), ml/s. */
 
     /* Pump duty-cycle guard: resting (can't brew) + remaining cooldown. */
     bool     pump_cooling;
@@ -101,6 +105,8 @@ typedef struct {
     level_status_t brew_level;
     level_status_t steam_level;
     bool           reservoir_ok;
+    bool           valve_brew_open;  /**< Brew auto-fill solenoid open.  */
+    bool           valve_steam_open; /**< Steam auto-fill solenoid open. */
 } app_telemetry_t;
 
 /** Post a machine event from any task/ISR-safe context. */

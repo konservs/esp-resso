@@ -126,6 +126,9 @@ static const char DASHBOARD_HTML[] =
     "<div class='card'>"
     "<div class='row'><span class='k'>Shot</span><span id='shot' class='st'>--</span></div>"
     "<div class='row'><span class='k'>Pump</span><span id='pump' class='st'>--</span></div>"
+    "<div class='row'><span class='k'>Fill &mdash; brew</span><span id='fillb' class='st'>--</span></div>"
+    "<div class='row'><span class='k'>Fill &mdash; steam</span><span id='fills' class='st'>--</span></div>"
+    "<div class='row'><span class='k'>Flow</span><span id='flow' class='st'>--</span></div>"
     "</div>"
     "<div class='card' id='admin' style='display:none'><button onclick='forget()'>Reconfigure Wi-Fi</button></div>"
     "<script>"
@@ -145,6 +148,9 @@ static const char DASHBOARD_HTML[] =
     "g('shot').className='st';g('shot').textContent=(d.shot.ms/1000).toFixed(1)+'s / '+d.shot.ml.toFixed(0)+'ml';"
     "if(d.pump.cooling){g('pump').textContent='Cooling '+Math.ceil(d.pump.ms/1000)+'s';g('pump').className='st warn'}"
     "else{g('pump').textContent='Ready';g('pump').className='st ok'}"
+    "function setValve(el,o){el.textContent=o?'Open':'Closed';el.className='st '+(o?'warn':'')}"
+    "setValve(g('fillb'),d.fill.brew);setValve(g('fills'),d.fill.steam);"
+    "g('flow').className='st';g('flow').textContent=d.flow.mls.toFixed(1)+' ml/s';"
     "g('admin').style.display=d.role==='admin'?'':'none';"
     "}catch(e){g('state').textContent='offline'}}"
     "async function forget(){if(!confirm('Forget Wi-Fi and reboot into setup mode?'))return;"
@@ -405,7 +411,7 @@ static esp_err_t telemetry_get(httpd_req_t *req)
     app_telemetry_t t;
     app_get_telemetry(&t);
 
-    char buf[640];
+    char buf[768];
     const int n = snprintf(
         buf, sizeof(buf),
         "{\"state\":\"%s\",\"safety\":\"%s\",\"ready\":%s,\"role\":\"%s\","
@@ -413,7 +419,9 @@ static esp_err_t telemetry_get(httpd_req_t *req)
         "\"brew\":{\"t\":%.1f,\"sp\":%.1f,\"ok\":%s,\"fault\":%u,\"level\":%d},"
         "\"steam\":{\"t\":%.1f,\"sp\":%.1f,\"ok\":%s,\"fault\":%u,\"level\":%d},"
         "\"shot\":{\"ml\":%.1f,\"ms\":%lu},"
-        "\"pump\":{\"cooling\":%s,\"ms\":%lu}}",
+        "\"pump\":{\"cooling\":%s,\"ms\":%lu},"
+        "\"fill\":{\"brew\":%s,\"steam\":%s},"
+        "\"flow\":{\"mls\":%.2f}}",
         machine_state_name(t.state), safety_trip_name(t.safety_trip),
         t.both_ready ? "true" : "false",
         role == ROLE_ADMIN ? "admin" : "user",
@@ -427,7 +435,10 @@ static esp_err_t telemetry_get(httpd_req_t *req)
         (unsigned)t.steam_temp_fault, (int)t.steam_level,
         (double)t.shot_volume_ml, (unsigned long)t.shot_elapsed_ms,
         t.pump_cooling ? "true" : "false",
-        (unsigned long)t.pump_cooldown_ms);
+        (unsigned long)t.pump_cooldown_ms,
+        t.valve_brew_open ? "true" : "false",
+        t.valve_steam_open ? "true" : "false",
+        (double)t.flow_rate_ml_s);
 
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, buf, n);

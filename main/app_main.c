@@ -44,11 +44,14 @@ void app_get_telemetry(app_telemetry_t *out)
     out->both_ready = g_app.both_ready;
     out->shot_volume_ml = g_app.shot_volume_ml;
     out->shot_elapsed_ms = g_app.shot_elapsed_ms;
+    out->flow_rate_ml_s = g_app.flow_rate_ml_s;
     out->pump_cooling = g_app.pump_cooling;
     out->pump_cooldown_ms = g_app.pump_cooldown_ms;
     out->brew_level = g_app.brew_level;
     out->steam_level = g_app.steam_level;
     out->reservoir_ok = g_app.reservoir_present;
+    out->valve_brew_open = g_app.valve_brew_open;
+    out->valve_steam_open = g_app.valve_steam_open;
     xSemaphoreGive(g_app.lock);
 
     /* Component health from the HAL (cached flags, no bus traffic). */
