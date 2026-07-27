@@ -89,7 +89,8 @@ in `idf.py monitor`; with a static IP it's the address you configured.
   switches (all on the same expander), shown on the dashboard as filled/outlined
   circles next to the Buttons status. `fault` is the MAX31865 fault byte when `ok`
   is false (`255` = no SPI comms);
-  `level` is `0`=Full, `1`=Filling, `2`=Low, `3`=Error. `pump.cooling` +
+  `level` is `0`=Full, `1`=Filling, `2`=Low, `3`=Error, `4`=Unknown (no trusted
+  reading yet, or the level task went stale). `pump.cooling` +
   `pump.ms` are the duty-cycle guard (rest remaining); `fill.brew`/`fill.steam`
   are the auto-fill solenoid commands; `flow.mls` is the smoothed flow rate in
   ml/s.

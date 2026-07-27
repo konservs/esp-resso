@@ -11,6 +11,12 @@
 
 #include "drivers/pins.h"
 
+#if LEVEL_DEBUG_SWEEP
+#include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#endif
+
 /* Flow meter K-factor. TODO: calibrate against a measured volume for your
  * specific meter (e.g. weigh the output and divide pulses by grams). */
 #define FLOW_PULSES_PER_ML 5.0f
@@ -210,7 +216,7 @@ hal_level_state_t hal_level_read(hal_level_id_t level)
     case HAL_LEVEL_BREW:  select = LEVEL_SELECT_BREW;  break;
     case HAL_LEVEL_STEAM: select = LEVEL_SELECT_STEAM; break;
     default:
-        return HAL_LEVEL_WET; /* unknown probe: fail safe against overfilling */
+        return HAL_LEVEL_FAULT; /* unknown probe (unreachable): no fill, no heat */
     }
 
     /* Probe at two frequencies; require BOTH directions to conduct at BOTH.
@@ -238,3 +244,51 @@ bool hal_level_present(hal_level_id_t level)
 {
     return hal_level_read(level) == HAL_LEVEL_WET;
 }
+
+#if LEVEL_DEBUG_SWEEP
+/* Bench voltmeter aid: hold each rod drive state this long so a multimeter can
+ * settle on it (vTaskDelay, not the µs busy-wait, so it yields the CPU). */
+#define LEVEL_DEBUG_HOLD_MS 2000
+
+void hal_level_debug_sweep(void)
+{
+    static const char *TAG = "lvl_dbg";
+
+    /* The four decoder drive states plus the all-off idle state (see the truth
+     * table in docs/level-sensing.md). `enable` off => level_idle(). */
+    static const struct {
+        const char *name;
+        int         select;
+        int         reverse;
+        bool        enable;
+    } steps[] = {
+        { "BREW  +12V (POS)", LEVEL_SELECT_BREW,  LEVEL_POS, true  },
+        { "BREW  -12V (NEG)", LEVEL_SELECT_BREW,  LEVEL_NEG, true  },
+        { "STEAM +12V (POS)", LEVEL_SELECT_STEAM, LEVEL_POS, true  },
+        { "STEAM -12V (NEG)", LEVEL_SELECT_STEAM, LEVEL_NEG, true  },
+        { "IDLE  (all off) ", LEVEL_SELECT_BREW,  LEVEL_POS, false },
+    };
+
+    ESP_LOGW(TAG, "level-drive debug sweep active: %d ms/step; level task is not "
+                  "publishing readings (probes seeded full). "
+                  "Set LEVEL_DEBUG_SWEEP=0 to disable.",
+             LEVEL_DEBUG_HOLD_MS);
+
+    for (;;) {
+        for (size_t i = 0; i < sizeof(steps) / sizeof(steps[0]); i++) {
+            if (steps[i].enable) {
+                level_drive(steps[i].select, steps[i].reverse);
+            } else {
+                level_idle();
+            }
+            vTaskDelay(pdMS_TO_TICKS(LEVEL_DEBUG_HOLD_MS));
+            /* Sample the sense lines at the end of the dwell so the log lines up
+             * with what the voltmeter shows for this step. */
+            const bool pos = level_conducting(PIN_LEVEL_SENSE_POS);
+            const bool neg = level_conducting(PIN_LEVEL_SENSE_NEG);
+            ESP_LOGI(TAG, "%s  SENSE_POS=%d  SENSE_NEG=%d",
+                     steps[i].name, pos, neg);
+        }
+    }
+}
+#endif /* LEVEL_DEBUG_SWEEP */

@@ -22,6 +22,7 @@
 #include "core/safety.h"
 #include "core/settings.h"
 #include "core/state_machine.h"
+#include "hal/hal_level.h"
 #include "hal/hal_temp.h"
 
 /** Water-level status for a boiler, for the diagnostics view. */
@@ -29,7 +30,8 @@ typedef enum {
     LVL_FULL = 0,  /**< Probe covered.                               */
     LVL_FILLING,   /**< Uncovered and the fill valve is open.        */
     LVL_LOW,       /**< Uncovered, fill held off (e.g. machine fault). */
-    LVL_ERROR      /**< Uncovered but the reservoir is empty.        */
+    LVL_ERROR,     /**< Uncovered but the reservoir is empty.        */
+    LVL_UNKNOWN    /**< No trusted reading (boot, or level task stale). */
 } level_status_t;
 
 /** Control-loop period. Boiler PIDs and the brew controller run at this rate. */
@@ -38,6 +40,15 @@ typedef enum {
 #define SAFETY_PERIOD_MS  50
 /** Display refresh period. */
 #define UI_PERIOD_MS      125
+/** Water-level sensing period. The level task owns the probe drive lines and
+ *  publishes debounced state to the control loop, so its cadence is independent
+ *  of CONTROL_PERIOD_MS and can be retuned (e.g. slowed for bench debugging)
+ *  without touching control timing. */
+#define LEVEL_PERIOD_MS   100
+/** A published boiler level older than this (the level task stalled or died) is
+ *  treated as untrusted: that boiler's heaters stay off and its fill valve shut
+ *  until a fresh reading arrives. */
+#define LEVEL_STALE_MS    10000
 
 /** Shared machine state. Hold @ref app_state_t::lock when touching it. */
 typedef struct {
@@ -71,14 +82,24 @@ typedef struct {
     bool     valve_brew_open;  /**< Brew auto-fill solenoid commanded open.   */
     bool     valve_steam_open; /**< Steam auto-fill solenoid commanded open.  */
 
-    /* Raw button/switch inputs for the dashboard indicators. These are the one
-     * exception to the "hold @ref lock" rule below: single writer (the UI task)
-     * and single reader (telemetry), non-critical, so they are published and
-     * read lock-free as atomics rather than under the mutex. */
+    /* Lock-free inter-task signals — the one exception to the "hold @ref lock"
+     * rule below. Each has a single writer and a single reader and is
+     * non-critical for a torn read, so it is published/read as an atomic rather
+     * than under the mutex.
+     * Buttons/switches: written by the UI task, read by telemetry. */
     _Atomic bool button_a;     /**< Button A (left / minus) pressed now.      */
     _Atomic bool button_b;     /**< Button B (right / plus) pressed now.      */
     _Atomic bool switch_brew;  /**< E61 brew lever engaged now.               */
     _Atomic bool switch_steam; /**< Steam knob engaged now.                   */
+    /* Debounced conductivity-probe state + its publish time: written by the
+     * level task at its own cadence (::LEVEL_PERIOD_MS), read by the control
+     * loop for the dry-fire interlock and auto-fill. Seeded to
+     * ::HAL_LEVEL_UNKNOWN at boot (see app_main); control distrusts a probe that
+     * is UNKNOWN or whose timestamp is older than ::LEVEL_STALE_MS, holding that
+     * boiler's heaters off and fill valve shut until a fresh reading arrives. */
+    _Atomic hal_level_state_t brew_probe_state;
+    _Atomic hal_level_state_t steam_probe_state;
+    _Atomic esp_ms_t          level_update_ms;
 
     SemaphoreHandle_t lock;   /**< Guards this struct.               */
     QueueHandle_t     events; /**< machine_event_t produced by tasks. */
@@ -143,5 +164,6 @@ void control_task(void *arg);
 void safety_task(void *arg);
 void ui_task(void *arg);
 void net_task(void *arg);
+void level_task(void *arg);
 
 #endif /* ESPRESSO_APP_H */

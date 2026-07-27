@@ -2,6 +2,7 @@ idf_component_register(
     SRCS
         "app_main.c"
         "tasks/control_task.c"
+        "tasks/level_task.c"
         "tasks/safety_task.c"
         "tasks/ui_task.c"
         "tasks/net_task.c"

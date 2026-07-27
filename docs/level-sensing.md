@@ -133,7 +133,20 @@ belt-and-suspenders on top of "only one boiler is ever driven."
 
 ## Operation (one read)
 
-Behind the unchanged `hal_level_present()`
+Sensing runs in a dedicated **`level_task`**
+([`level_task.c`](../main/tasks/level_task.c)), not the control loop: a read
+drives the isolated burst below and busy-waits a few ms, so it is kept off the
+control/safety core. The task debounces each probe and publishes the result to
+`app_state_t` as a lock-free atomic (`brew_probe_state` / `steam_probe_state`);
+`control_task` just reads those. Each publish is timestamped, and `control_task`
+treats a probe as untrusted — heaters off, fill shut — when it reads
+`HAL_LEVEL_UNKNOWN` (the boot seed) or the timestamp is older than
+`LEVEL_STALE_MS` (10 s), so a stalled level task fails safe. Because it is its
+own task, its sensing cadence
+(`LEVEL_PERIOD_MS`) is tunable independently of the control period — see the
+`LEVEL_DEBUG_SWEEP` bench mode in [`hal_level.h`](../components/espresso_hal/include/hal/hal_level.h).
+
+Behind `hal_level_read()`
 ([`hal_esp32_sensors.c`](../components/drivers/src/hal_esp32_sensors.c)):
 
 1. Set `SELECT` to the boiler (routes both its drive and its sense mux channel).
@@ -149,12 +162,14 @@ Behind the unchanged `hal_level_present()`
 4. `wet` then requires **both** `SENSE_POS` (+ halves) **and** `SENSE_NEG`
    (− halves) to log ≥ `LEVEL_WET_MIN_HITS`.
 5. Optionally repeat at a second *f* and require agreement (noise rejection).
-6. `ENABLE` off between reads (idle). The control loop debounces so
+6. `ENABLE` off between reads (idle). The level task debounces so
    boiling/splashing doesn't chatter the autofill valve.
 
-Autofill lives in `control_task` ([control.md](control.md)): it opens the fill
-valve while the rod reads dry, gated on the reservoir having water and no fault
-(dry-fire protection).
+Autofill lives in `control_task` ([control.md](control.md)): it reads the level
+task's published state and opens the fill valve while the rod reads dry, gated on
+the reservoir having water and no fault (dry-fire protection). The reservoir
+float switch is a plain GPIO (no drive lines), so `control_task` still reads it
+directly.
 
 ## Reservoir
 

@@ -75,7 +75,7 @@ static void draw_boiler(uint8_t x0, level_status_t level, bool sensor_ok,
 {
     /* Water-level drop on the left: full / empty (low) / crossed (fault). */
     const uint8_t *drop = (level == LVL_FULL)  ? DROP_FULL
-                        : (level == LVL_ERROR) ? DROP_FAULT
+                        : (level == LVL_ERROR || level == LVL_UNKNOWN) ? DROP_FAULT
                         :                        DROP_EMPTY;
     hal_display_bitmap((uint8_t)(x0 + DROP_X), DROP_Y, DROP_W, DROP_H, drop);
 

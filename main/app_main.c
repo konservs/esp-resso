@@ -13,6 +13,7 @@
 #include "hal/hal.h"
 #include "hal/hal_display.h"
 #include "hal/hal_input.h"
+#include "hal/hal_level.h"
 #include "hal/hal_storage.h"
 
 static const char *TAG = "app";
@@ -124,11 +125,19 @@ void app_main(void)
     load_settings(&g_app.settings);
     init_controllers(&g_app);
 
-    /* Priorities: safety highest, then control, then UI/net.
+    /* Start both boiler levels UNKNOWN: until the level task publishes a fresh
+     * reading, control treats them as untrusted (heaters off, fill valve shut). */
+    atomic_init(&g_app.brew_probe_state, HAL_LEVEL_UNKNOWN);
+    atomic_init(&g_app.steam_probe_state, HAL_LEVEL_UNKNOWN);
+    atomic_init(&g_app.level_update_ms, 0);
+
+    /* Priorities: safety highest, then control, then level sensing, then UI/net.
      * Control + safety are pinned to core 1 to keep timing away from the
-     * Wi-Fi/IDF housekeeping that tends to live on core 0. */
+     * Wi-Fi/IDF housekeeping that tends to live on core 0. The level task sits on
+     * core 0 too, so its few-ms probe bursts never steal time from control. */
     xTaskCreatePinnedToCore(safety_task,  "safety",  3072, NULL, 6, NULL, 1);
     xTaskCreatePinnedToCore(control_task, "control", 4096, NULL, 5, NULL, 1);
+    xTaskCreatePinnedToCore(level_task,   "level",   3072, NULL, 4, NULL, 0);
     xTaskCreatePinnedToCore(ui_task,      "ui",      4096, NULL, 3, NULL, 0);
     xTaskCreatePinnedToCore(net_task,     "net",     4096, NULL, 2, NULL, 0);
 

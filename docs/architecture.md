@@ -7,7 +7,7 @@ Abstraction Layer (HAL).
 ```
         +----------------------------------------------------+
         |                     main/ (ESP32)                  |
-        |  FreeRTOS tasks: control · safety · ui · net        |
+        |  FreeRTOS tasks: control · safety · level · ui · net |
         |  - own timing, priorities, queues, the mutex        |
         |  - read HAL inputs, call core, write HAL outputs    |
         +------------------------+---------------------------+
@@ -55,7 +55,8 @@ compile and run natively for tests.
 | Task | Priority | Core/Period | Responsibility |
 |------|----------|-------------|----------------|
 | `safety`  | highest | 1 / 50 ms  | Independent supervisor; cuts heaters and posts `EV_FAULT` on a trip. |
-| `control` | high    | 1 / 100 ms | Read temps, run boiler PIDs → SSR duty, run the brew profile, auto-fill, drain the machine-event queue. |
+| `control` | high    | 1 / 100 ms | Read temps, run boiler PIDs → SSR duty, run the brew profile, auto-fill decision (from the level task's published state), drain the machine-event queue. |
+| `level`   | med-high| 0 / 100 ms | Sense both boiler conductivity probes (sole owner of the drive lines), debounce, and publish state to the control loop via atomics. Its cadence (`LEVEL_PERIOD_MS`) is independent of the control loop. |
 | `ui`      | medium  | 0 / 125 ms | Poll buttons/switches → gestures/events, render the OLED. |
 | `net`     | low     | 0 / —      | Wi-Fi station + HTTP dashboard (optional). |
 

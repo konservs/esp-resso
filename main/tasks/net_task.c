@@ -143,7 +143,7 @@ static const char DASHBOARD_HTML[] =
     "<div class='card' id='admin' style='display:none'><button onclick='forget()'>Reconfigure Wi-Fi</button></div>"
     "<script>"
     "function g(id){return document.getElementById(id)}"
-    "var LVL=['Full','Filling','Low','Error'],LC=['ok','warn','warn','err'];"
+    "var LVL=['Full','Filling','Low','Error','Unknown'],LC=['ok','warn','warn','err','warn'];"
     "function setOk(el,b){el.textContent=b?'OK':'FAULT';el.className='st '+(b?'ok':'err')}"
     "function setLeds(el,states){el.textContent='';states.forEach(function(s){"
     "var c=document.createElement('span');c.className='led'+(s.on?' on':'');"

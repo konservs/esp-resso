@@ -10,8 +10,6 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-#include "core/filter.h"
-
 #include "hal/hal_flow.h"
 #include "hal/hal_heater.h"
 #include "hal/hal_level.h"
@@ -31,8 +29,10 @@ static void drain_events(app_state_t *app)
 }
 
 /* Classify a boiler probe for the diagnostics view, mirroring the fill logic. */
-static level_status_t level_of(bool full, bool filling, bool fault, bool reservoir_ok)
+static level_status_t level_of(bool trusted, bool full, bool filling, bool fault,
+                               bool reservoir_ok)
 {
+    if (!trusted)      return LVL_UNKNOWN; /* no fresh reading (boot / stale)     */
     if (fault)         return LVL_ERROR; /* sense path shorted/stuck — untrusted */
     if (full)          return LVL_FULL;
     if (filling)       return LVL_FILLING;
@@ -57,15 +57,6 @@ void control_task(void *arg)
     float flow_rate = 0.0f;
     const float FLOW_RATE_ALPHA = 0.25f;
 
-    /* Debounce the level probes so the fill valves do not chatter. The "full"
-     * debouncers start true (assume full at boot so we never fill blind); the
-     * "fault" ones start false. */
-    debounce_t db_brew, db_steam, db_brew_fault, db_steam_fault;
-    debounce_init(&db_brew, 3, true);
-    debounce_init(&db_steam, 3, true);
-    debounce_init(&db_brew_fault, 3, false);
-    debounce_init(&db_steam_fault, 3, false);
-
     for (;;) {
         vTaskDelayUntil(&last, period);
 
@@ -73,14 +64,31 @@ void control_task(void *arg)
         const hal_temp_reading_t bt = hal_temp_read(HAL_BOILER_BREW);
         const hal_temp_reading_t st = hal_temp_read(HAL_BOILER_STEAM);
         float flow_ml = hal_flow_ml();
-        const hal_level_state_t brew_lvl = hal_level_read(HAL_LEVEL_BREW);
-        const hal_level_state_t steam_lvl = hal_level_read(HAL_LEVEL_STEAM);
-        const bool brew_full = debounce_update(&db_brew, brew_lvl == HAL_LEVEL_WET);
-        const bool steam_full = debounce_update(&db_steam, steam_lvl == HAL_LEVEL_WET);
-        const bool brew_fault = debounce_update(&db_brew_fault, brew_lvl == HAL_LEVEL_FAULT);
-        const bool steam_fault = debounce_update(&db_steam_fault, steam_lvl == HAL_LEVEL_FAULT);
+
+        /* Boiler levels come from the level task (debounced, its own cadence) via
+         * lock-free atomics — the control loop never blocks on a probe read. Read
+         * the publish timestamp before the states: with seq-cst atomics a "fresh"
+         * timestamp then implies the states are from that same publish. The
+         * reservoir float switch is a plain GPIO with no drive-line coupling, so
+         * it is read here directly. */
+        const esp_ms_t level_ts = atomic_load(&app->level_update_ms);
+        const hal_level_state_t brew_lvl = atomic_load(&app->brew_probe_state);
+        const hal_level_state_t steam_lvl = atomic_load(&app->steam_probe_state);
         const bool reservoir_ok = hal_level_present(HAL_LEVEL_RESERVOIR);
         const esp_ms_t now = hal_time_ms();
+
+        /* Distrust a level with no fresh reading: not published yet (UNKNOWN at
+         * boot) or older than LEVEL_STALE_MS (level task stalled/died). An
+         * untrusted probe forces that boiler's heaters off and its fill shut. */
+        const bool level_fresh = espresso_elapsed_ms(level_ts, now) < LEVEL_STALE_MS;
+        const bool brew_trusted = level_fresh && brew_lvl != HAL_LEVEL_UNKNOWN;
+        const bool steam_trusted = level_fresh && steam_lvl != HAL_LEVEL_UNKNOWN;
+        const bool brew_full = brew_trusted && brew_lvl == HAL_LEVEL_WET;
+        const bool steam_full = steam_trusted && steam_lvl == HAL_LEVEL_WET;
+        const bool brew_fault = brew_trusted && brew_lvl == HAL_LEVEL_FAULT;
+        const bool steam_fault = steam_trusted && steam_lvl == HAL_LEVEL_FAULT;
+        const bool brew_dry = brew_trusted && brew_lvl == HAL_LEVEL_DRY;
+        const bool steam_dry = steam_trusted && steam_lvl == HAL_LEVEL_DRY;
 
         float brew_duty = 0.0f, steam_duty = 0.0f;
         bool both_ready = false;
@@ -173,10 +181,10 @@ void control_task(void *arg)
          * A faulted probe holds the fill valve shut: we can't trust the reading,
          * and opening the valve on a bad "dry" reading risks overfilling. */
         const bool can_fill = (state != MACHINE_FAULT) && reservoir_ok;
-        const bool brew_filling = can_fill && !brew_full && !brew_fault;
-        const bool steam_filling = can_fill && !steam_full && !steam_fault;
-        app->brew_level = level_of(brew_full, brew_filling, brew_fault, reservoir_ok);
-        app->steam_level = level_of(steam_full, steam_filling, steam_fault, reservoir_ok);
+        const bool brew_filling = can_fill && brew_dry;
+        const bool steam_filling = can_fill && steam_dry;
+        app->brew_level = level_of(brew_trusted, brew_full, brew_filling, brew_fault, reservoir_ok);
+        app->steam_level = level_of(steam_trusted, steam_full, steam_filling, steam_fault, reservoir_ok);
         app->reservoir_present = reservoir_ok;
         app->valve_brew_open = brew_filling;
         app->valve_steam_open = steam_filling;
