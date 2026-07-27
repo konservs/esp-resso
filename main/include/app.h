@@ -10,6 +10,8 @@
 #ifndef ESPRESSO_APP_H
 #define ESPRESSO_APP_H
 
+#include <stdatomic.h>
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
@@ -69,6 +71,15 @@ typedef struct {
     bool     valve_brew_open;  /**< Brew auto-fill solenoid commanded open.   */
     bool     valve_steam_open; /**< Steam auto-fill solenoid commanded open.  */
 
+    /* Raw button/switch inputs for the dashboard indicators. These are the one
+     * exception to the "hold @ref lock" rule below: single writer (the UI task)
+     * and single reader (telemetry), non-critical, so they are published and
+     * read lock-free as atomics rather than under the mutex. */
+    _Atomic bool button_a;     /**< Button A (left / minus) pressed now.      */
+    _Atomic bool button_b;     /**< Button B (right / plus) pressed now.      */
+    _Atomic bool switch_brew;  /**< E61 brew lever engaged now.               */
+    _Atomic bool switch_steam; /**< Steam knob engaged now.                   */
+
     SemaphoreHandle_t lock;   /**< Guards this struct.               */
     QueueHandle_t     events; /**< machine_event_t produced by tasks. */
 } app_state_t;
@@ -102,6 +113,10 @@ typedef struct {
     /* Component self-check for the diagnostics view. */
     bool           display_ok;
     bool           buttons_ok;
+    bool           button_a;    /**< Button A (left / minus) pressed now.  */
+    bool           button_b;    /**< Button B (right / plus) pressed now.  */
+    bool           switch_brew; /**< E61 brew lever engaged now.           */
+    bool           switch_steam;/**< Steam knob engaged now.               */
     level_status_t brew_level;
     level_status_t steam_level;
     bool           reservoir_ok;

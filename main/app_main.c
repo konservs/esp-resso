@@ -57,6 +57,12 @@ void app_get_telemetry(app_telemetry_t *out)
     /* Component health from the HAL (cached flags, no bus traffic). */
     out->display_ok = hal_display_ok();
     out->buttons_ok = hal_input_ok();
+
+    /* Raw button/switch states: lock-free atomics published by the UI task. */
+    out->button_a = atomic_load(&g_app.button_a);
+    out->button_b = atomic_load(&g_app.button_b);
+    out->switch_brew = atomic_load(&g_app.switch_brew);
+    out->switch_steam = atomic_load(&g_app.switch_steam);
 }
 
 /* Load persisted settings, falling back to validated defaults. */

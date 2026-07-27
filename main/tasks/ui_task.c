@@ -211,6 +211,8 @@ void ui_task(void *arg)
         /* Machine control switches -> machine events on edges. */
         const bool bsw = hal_switch_brew();
         const bool ssw = hal_switch_steam();
+        atomic_store(&app->switch_brew, bsw);   /* publish for the dashboard */
+        atomic_store(&app->switch_steam, ssw);
         if (bsw && !prev_brew_sw)  app_post_event(EV_BREW_LEVER_ON);
         if (!bsw && prev_brew_sw)  app_post_event(EV_BREW_LEVER_OFF);
         if (ssw && !prev_steam_sw) app_post_event(EV_STEAM_ON);
@@ -220,6 +222,12 @@ void ui_task(void *arg)
 
         /* UI buttons -> gestures -> menu. */
         const hal_buttons_t btn = hal_buttons_read();
+
+        /* Publish the raw pressed states for the Wi-Fi dashboard's indicators.
+         * Lock-free: this is the only writer; telemetry is the only reader. */
+        atomic_store(&app->button_a, btn.a);
+        atomic_store(&app->button_b, btn.b);
+
         const button_event_t be = buttons_update(&buttons, btn.a, btn.b, now);
         if (be != BTN_NONE) {
             xSemaphoreTake(app->lock, portMAX_DELAY);

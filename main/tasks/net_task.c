@@ -102,17 +102,27 @@ static const char DASHBOARD_HTML[] =
     ".hd{color:#e0892b;font-weight:600;margin-bottom:.3rem}"
     ".row{display:flex;justify-content:space-between;align-items:baseline;padding:.18rem 0}"
     ".k{color:#9a8}.st{font-weight:600}"
+    ".bstat{display:flex;align-items:baseline}"
+    ".leds{margin-right:.5rem;letter-spacing:.15rem}"
+    ".led{color:#6a6a5a}.led.on{color:#e0892b}"
     ".ok{color:#7cd97c}.warn{color:#e0b02b}.err{color:#e0552b}"
     "#state{font-weight:600;color:#e0892b}"
     "button{background:#3a2e24;color:#caa;border:0;border-radius:8px;padding:.5rem .8rem;font-size:.85rem}"
     "#oled{display:block;width:100%;max-width:512px;margin:.2rem auto 1rem;"
     "image-rendering:pixelated;background:#000;border-radius:6px}"
+    ".ns{background:#2a1512;border:1px solid #e0552b;color:#f0b8ab;"
+    "border-radius:10px;padding:.7rem 1rem;margin:.6rem 0}"
     "</style></head><body>"
     "<h1>ESP.Resso &middot; <span id='state'>...</span></h1>"
+    "<noscript><div class='ns'>&#9888; JavaScript is disabled &mdash; this "
+    "dashboard needs it to load and refresh live status. Please enable "
+    "JavaScript for this page.</div></noscript>"
     "<canvas id='oled' width='512' height='256'></canvas>"
     "<div class='card'>"
     "<div class='row'><span class='k'>Display</span><span id='disp' class='st'>--</span></div>"
-    "<div class='row'><span class='k'>Buttons</span><span id='btns' class='st'>--</span></div>"
+    "<div class='row'><span class='k'>Buttons</span>"
+    "<span class='bstat'><span id='btnleds' class='leds'></span>"
+    "<span id='btns' class='st'>--</span></span></div>"
     "<div class='row'><span class='k'>Reservoir</span><span id='res' class='st'>--</span></div>"
     "</div>"
     "<div class='card'><div class='hd'>Brew boiler</div>"
@@ -135,6 +145,9 @@ static const char DASHBOARD_HTML[] =
     "function g(id){return document.getElementById(id)}"
     "var LVL=['Full','Filling','Low','Error'],LC=['ok','warn','warn','err'];"
     "function setOk(el,b){el.textContent=b?'OK':'FAULT';el.className='st '+(b?'ok':'err')}"
+    "function setLeds(el,states){el.textContent='';states.forEach(function(s){"
+    "var c=document.createElement('span');c.className='led'+(s.on?' on':'');"
+    "c.textContent=s.on?'\\u25CF':'\\u25CB';c.title=s.name;el.appendChild(c)})}"
     "function faultText(f){if(f===255)return 'no SPI comms';if(f&192)return 'out of range';"
     "if(f&56)return 'open circuit';if(f&4)return 'voltage fault';return 'fault 0x'+f.toString(16)}"
     "function setTemp(el,o){if(o.ok){el.textContent=o.t.toFixed(1)+'\\u00B0C  OK';el.className='st ok'}"
@@ -143,6 +156,9 @@ static const char DASHBOARD_HTML[] =
     "async function tick(){try{const d=await(await fetch('/api/telemetry')).json();"
     "g('state').textContent=d.safety==='OK'?d.state:('FAULT: '+d.safety);"
     "setOk(g('disp'),d.display);setOk(g('btns'),d.buttons);setOk(g('res'),d.reservoir);"
+    "setLeds(g('btnleds'),d.buttons&&d.btn?"
+    "[{on:d.btn.a,name:'A (left / minus)'},{on:d.btn.b,name:'B (right / plus)'},"
+    "{on:d.btn.brew,name:'Brew lever'},{on:d.btn.steam,name:'Steam knob'}]:[]);"
     "setTemp(g('bt'),d.brew);setLevel(g('bl'),d.brew.level);"
     "setTemp(g('stt'),d.steam);setLevel(g('sl'),d.steam.level);"
     "g('shot').className='st';g('shot').textContent=(d.shot.ms/1000).toFixed(1)+'s / '+d.shot.ml.toFixed(0)+'ml';"
@@ -178,8 +194,13 @@ static const char SETUP_HTML[] =
     "background:#241c16;color:#eee;font-size:1rem}"
     "button{background:#e0892b;color:#15110e;font-weight:600;border:0;margin-top:1rem}"
     "#msg{margin-top:1rem;color:#caa}.r{display:flex;gap:.5rem}.r button{width:auto}"
+    ".ns{background:#2a1512;border:1px solid #e0552b;color:#f0b8ab;"
+    "border-radius:10px;padding:.7rem 1rem;margin:.6rem 0}"
     "</style></head><body>"
     "<h1>ESP.Resso &middot; Wi-Fi setup</h1>"
+    "<noscript><div class='ns'>&#9888; JavaScript is disabled &mdash; scanning "
+    "for networks and saving your settings both need it. Please enable "
+    "JavaScript for this page.</div></noscript>"
     "<div class='r'><select id='nets'><option value=''>-- scan for networks --</option></select>"
     "<button type='button' onclick='scan()'>&#x21bb;</button></div>"
     "<label>Network (SSID)</label><input id='ssid' autocapitalize='off' autocorrect='off'>"
@@ -415,7 +436,8 @@ static esp_err_t telemetry_get(httpd_req_t *req)
     const int n = snprintf(
         buf, sizeof(buf),
         "{\"state\":\"%s\",\"safety\":\"%s\",\"ready\":%s,\"role\":\"%s\","
-        "\"display\":%s,\"buttons\":%s,\"reservoir\":%s,"
+        "\"display\":%s,\"buttons\":%s,"
+        "\"btn\":{\"a\":%s,\"b\":%s,\"brew\":%s,\"steam\":%s},\"reservoir\":%s,"
         "\"brew\":{\"t\":%.1f,\"sp\":%.1f,\"ok\":%s,\"fault\":%u,\"level\":%d},"
         "\"steam\":{\"t\":%.1f,\"sp\":%.1f,\"ok\":%s,\"fault\":%u,\"level\":%d},"
         "\"shot\":{\"ml\":%.1f,\"ms\":%lu},"
@@ -426,6 +448,8 @@ static esp_err_t telemetry_get(httpd_req_t *req)
         t.both_ready ? "true" : "false",
         role == ROLE_ADMIN ? "admin" : "user",
         t.display_ok ? "true" : "false", t.buttons_ok ? "true" : "false",
+        t.button_a ? "true" : "false", t.button_b ? "true" : "false",
+        t.switch_brew ? "true" : "false", t.switch_steam ? "true" : "false",
         t.reservoir_ok ? "true" : "false",
         (double)t.brew_temp, (double)t.brew_setpoint,
         t.brew_sensor_ok ? "true" : "false",

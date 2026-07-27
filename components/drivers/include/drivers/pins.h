@@ -74,11 +74,11 @@
 /* Moved off native GPIOs onto the I2C expander to free JTAG pins. The expander
  * pin idles high (weak pull-up); the contact wires to GND. P4..P7 are spare for
  * future buttons — just add an EXP_* bit and read it via hal_input. */
-#define EXP_BTN_A          0  /* P0: button A (- / left)        */
-#define EXP_BTN_B          1  /* P1: button B (+ / right)       */
-#define EXP_SWITCH_BREW    2  /* P2: E61 brew lever microswitch */
-#define EXP_SWITCH_STEAM   3  /* P3: steam knob microswitch     */
-/* P4..P7: free for future buttons.                                            */
+#define EXP_BTN_A          7  /* P7: button A (- / left)        */
+#define EXP_BTN_B          6  /* P6: button B (+ / right)       */
+#define EXP_SWITCH_BREW    5  /* P5: E61 brew lever microswitch */
+#define EXP_SWITCH_STEAM   4  /* P4: steam knob microswitch     */
+/* P0..P3: free for future buttons.                                            */
 
 /* --- Freed / spare native GPIOs ------------------------------------------- */
 /* GPIO 33 and the freed GPIO 14 now drive the two upper heater-element SSRs;
