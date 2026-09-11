@@ -88,10 +88,11 @@ The LO and HI SSRs are **not** wired together and are not a single logical heate
   control and lower peak current than pulsing 800 W), while a cold start adds the
   second element for 800 W of heat-up power. This is exactly what the two
   per-boiler squares on the display show (empty = element off, filled = driven).
-- **Boot safety:** every ULN2003 heater input needs an external pulldown so the
-  SSRs stay off during the reset window — mandatory on GPIO 14 (steam-HI), which
-  idles with a weak internal pull-up. See [hardware.md](hardware.md) and
-  [safety.md](safety.md).
+- **Boot safety:** every ULN2003 heater input carries a 10 kΩ pulldown (R9, R10,
+  R17, R22) so the SSRs stay off through the reset window — the four heater pins
+  all float at reset, and the firmware does not drive them low until
+  `hal_heater_init()` runs. No heater sits on GPIO 14, which idles pulled up. See
+  [hardware.md](hardware.md) and [safety.md](safety.md).
 
 ## Brew profiles
 

@@ -6,17 +6,22 @@ electrode. Water rising to the tip bridges rod→water→body and the resistance
 drops from ~open to a few kΩ — a single **wet / dry** threshold per boiler.
 Autofill runs the pump + inlet valve until the rod is covered.
 
-## Contacts: four wires, (up to) three electrical nodes
+## Contacts: four wires, three electrical nodes
 
-| Contact | Meaning |
-|---------|---------|
-| **PROBE_BREW** | brew boiler rod |
-| **PROBE_STEAM** | steam boiler rod |
-| **SENSE_BREW / SENSE_STEAM** | brew / steam boiler body |
+| Contact | Net | Meaning |
+|---------|-----|---------|
+| **PROBE_BREW** | `PROBE_BREW` | brew boiler rod (J3.1) |
+| **PROBE_STEAM** | `PROBE_STEAM` | steam boiler rod (J4.1) |
+| brew / steam body | `GNDA` | both boiler bodies (J3.2, J4.2) |
 
-The bodies are normally bonded to **earth/chassis**, so SENSE_BREW = SENSE_STEAM = one node.
-We **don't rely on that**: each boiler has its own POS/NEG sense pair, so sensing
-still works if a body bond is poor or absent.
+The bodies are bonded to **earth/chassis** and both tie directly to `GNDA`, so they
+are **one node** by design — that tie is the isolated domain's 0 V reference (see
+[Supply and grounding](#supply-and-grounding)).
+
+Per-boiler independence does not depend on that, though: each boiler's `POS`/`NEG`
+sense-opto pair sits **in its own rod line**, upstream of the water, so it only ever
+carries that boiler's probe current. A poor body bond degrades the boiler it belongs
+to and cannot make the other boiler misread.
 
 ## Design at a glance
 
@@ -66,21 +71,33 @@ any two switches) can never be on together — that's the hardware interlock, an
 every input combination is safe. `ENABLE` = on/off, `REVERSE` = polarity,
 `SELECT` = boiler. The four active-low outputs drive the four drive-opto LEDs.
 
-> Wire `ENABLE` so the decoder powers up **disabled** (all outputs off) at boot —
-> e.g. a pull to the inactive level on the `Ē` line.
+> `ENABLE` carries a **4.7 kΩ pull-up to 3.3 V (R11)** so the decoder powers up
+> **disabled** (all outputs off) at boot, before `hal_level_init()` drives the pin.
 
 ## Sense routing: 74HC157 mux (MCU side, 3.3 V)
 
 The four sense optos have their outputs pulled up to 3.3 V and fed to a **74HC157**
-2:1 mux; `SELECT` routes the active boiler's pair to the MCU:
+(U15) 2:1 mux; `SELECT` routes the active boiler's pair to the MCU:
 
-| SELECT | `SENSE_POS` ← | `SENSE_NEG` ← |
-|:------:|---------------|---------------|
-| 0 (brew) | BREW_POS | BREW_NEG |
-| 1 (steam) | STEAM_POS | STEAM_NEG |
+| SELECT | `SENSE_POS` ← U15 Za | `SENSE_NEG` ← U15 Zb |
+|:------:|----------------------|----------------------|
+| 0 (brew) | `SENSE_BREW_POS` (I0a, U8) | `SENSE_BREW_NEG` (I0b, U14) |
+| 1 (steam) | `SENSE_STEAM_POS` (I1a, U17) | `SENSE_STEAM_NEG` (I1b, U9) |
 
 So the unselected boiler's optos are physically disconnected from the sense pins —
 belt-and-suspenders on top of "only one boiler is ever driven."
+
+Two wiring details matter on this part:
+
+- **`Ē` (pin 15) is tied to GND**, permanently enabling the mux. The '157 has *no*
+  tri-state — a high `Ē` forces both outputs **LOW**, which (conduction being
+  active-low) is indistinguishable from "both sense lines conducting" and would
+  read as a fault. Do **not** gate `Ē` from `ENABLE`; `SELECT` alone does the
+  routing. Use a '257 if you ever need a high-Z output instead.
+- **The unused c/d channels have their inputs tied to GND** (pins 10, 11, 13, 14).
+  Floating CMOS inputs hold both output FETs partly on, raising I(CC) and coupling
+  noise into the used channels through the shared supply. The unused outputs
+  (pins 9, 12) are correctly left open.
 
 ## Isolation: eight opto channels
 
@@ -92,25 +109,44 @@ belt-and-suspenders on top of "only one boiler is ever driven."
 ## Drive + sense circuit (isolated domain)
 
 ```
-   +12VA ─┬─[BREW_P  opto ▷]─┐              ┌─[STEAM_P opto ▷]─┬─ +12VA
-          │                  ● drive1       ● drive2          │
-   −12VA ─┴─[BREW_N  opto ▷]─┘   │          │   └[STEAM_N opto ▷]┴─ −12VA
-                                 │          │
-                           [Rlim1 4.7k] [Rlim2 4.7k]
-                                 │          │
-                   BREW_POS ►|◄ BREW_NEG   STEAM_POS ►|◄ STEAM_NEG   (anti-parallel
-                                 │          │                          sense-opto LED pairs)
-                            PROBE_BREW PROBE_STEAM
-                             )water(     )water(
-                            SENSE_BREW SENSE_STEAM
-                                 └─────┬─────┘
-                                     GNDA (= earth, single tie)
+   Brew channel. Steam is identical: U3/U13 drive, R7 = Rlim, U17 = POS, U9 = NEG.
 
-   Each ▷ is a drive-opto output transistor (collector→emitter), NOT a MOSFET.
-   The opto's LED sits on the MCU side, lit by a 74HC139 output; lighting it
+   +12VA ────[ U10  BREW_P  ▷ ]────┐
+                                   ├──● drive node    exactly one opto ever on
+   −12VA ────[ U11  BREW_N  ▷ ]────┘  │               (74HC139 interlock)
+                                      │
+                              [ R8   4.7 kΩ ]         Rlim — sets probe current.
+                                      │               ONE per boiler, shared by both
+                                      ● excitation    polarities, so the + and − half
+                                      │   node        cycles see identical impedance
+                          ┌───────────┴───────────┐   → zero net DC
+                        ──▼── U8   POS          ──▲── U14  NEG
+                          │    (+ half)           │    (− half)
+                          └───────────┬───────────┘   anti-parallel: each LED clamps
+                                      │               the other's reverse to ~1.2 V,
+                                      │               so neither is ever overstressed
+                          PROBE_BREW  ●── J3.1 ── rod ──┐
+                                      │                 │
+                                  ) water (             │  boiler
+                                      │  few kΩ wet     │
+                                      │  open when dry  │
+                                GNDA  ●── J3.2 ── body ─┘
+
+   ▼ / ▲ = sense-opto LED; the triangle points the way current flows.
+   ▷     = drive-opto output transistor (collector→emitter), NOT a MOSFET.
+
+   Both boiler bodies tie directly to GNDA — the single earth reference.
+
+   The drive opto's LED sits on the MCU side, lit by a 74HC139 output; lighting it
    turns the transistor on and ties the rod to that rail. A phototransistor
    conducts one way only — exactly what a single-polarity switch needs — so one
    PC817 type covers both the +12VA (P) and −12VA (N) roles. No gate, no bias.
+
+   The sense pair sits in the ROD line, between Rlim and the rod — not in the body
+   return. That placement is load-bearing: it makes each pair carry the full probe
+   current of its own boiler only. Moving it to the body side would put both
+   boilers' pairs in parallel across the shared GNDA tie, halving the current
+   through each and letting a failure in one channel silently reroute the other.
 ```
 
 - **The drive opto *is* the switch.** Probe current is only ~1–2 mA — well within
@@ -127,9 +163,23 @@ belt-and-suspenders on top of "only one boiler is ever driven."
   the 330 Ω series R gives ~5–6 mA, which a ≥ 50 % CTR part turns into ≥ 2.5 mA —
   enough to saturate the 1–2 mA switch. Drop toward ~220 Ω for worst-case-CTR parts.
 - **Rlim (~4.7 kΩ)** per boiler sets ~1–2 mA — low current + AC = no electrolysis.
+  Use **one** resistor per boiler on the shared drive node, not one per polarity:
+  a single resistor guarantees the + and − half-cycles see the same impedance, and
+  splitting it puts a tolerance mismatch straight into the water (net DC).
 - The **anti-parallel sense pair** sits in each rod line: `POS` lights on the +
-  half (rod at +12VA), `NEG` on the − half (rod at −12VA). Because these are
-  per-boiler, sensing does not depend on the bodies being a common node.
+  half (rod at +12VA), `NEG` on the − half (rod at −12VA). Orientation matters —
+  the LED whose **anode faces Rlim** is `POS` (it conducts when current flows
+  Rlim → rod); the one whose anode faces the rod is `NEG`. Getting these swapped
+  reads as permanently dry with *no* fault raised, because exactly one line still
+  asserts per half-cycle — it just asserts the wrong one.
+- **Sense-opto CTR is the tight budget.** PC817 CTR is specified at I(F) = 5 mA and
+  degrades sharply below ~1 mA, so at a 1–2 mA probe current expect only a few
+  hundred µA of collector current. The pull-up must be weak enough that this still
+  pulls the mux input below V(IL): 47 kΩ needs ~53 µA (≈10× margin), while 4.7 kΩ
+  needs ~530 µA and will leave the input stranded near mid-rail — which puts the
+  '157 in its linear region and shows up as ~1.9 V on its output. If a sense line
+  reads mid-rail, measure the drop across Rlim first: `I = V(Rlim) / R` is the
+  single most diagnostic number in this subsystem.
 
 ## Operation (one read)
 
@@ -193,27 +243,42 @@ to GND with an external pull-up (GPIO39 is input-only). No AC sensing needed.
 | Signal | GPIO | Dir | Role |
 |--------|-----:|-----|------|
 | `PIN_LEVEL_SELECT` | 16 | out | boiler select → 74HC139 A1 + 74HC157 sel |
-| `PIN_LEVEL_ENABLE` | 17 | out | drive enable → 74HC139 Ē (idle-off at boot) |
-| `PIN_LEVEL_REVERSE` | 32 | out | polarity → 74HC139 A0 |
-| `PIN_LEVEL_SENSE_POS` | 35 | in | + conduction (74HC157 out; input-only) |
-| `PIN_LEVEL_SENSE_NEG` | 36 | in | − conduction (74HC157 out; input-only) |
-| `PIN_LEVEL_RESERVOIR` | 39 | in | reservoir float switch (ext. pull-up) |
+| `PIN_LEVEL_ENABLE` | 17 | out | drive enable → 74HC139 Ē; **R11** 4.7 kΩ pull-up = idle-off at boot |
+| `PIN_LEVEL_REVERSE` | 14 | out | polarity → 74HC139 A0 (idles high at reset; gated by R11) |
+| `PIN_LEVEL_SENSE_POS` | 35 | in | + conduction (74HC157 out; input-only, no pull needed) |
+| `PIN_LEVEL_SENSE_NEG` | 36 | in | − conduction (74HC157 out; input-only, no pull needed) |
+| `PIN_LEVEL_RESERVOIR` | 39 | in | reservoir float switch (input-only; **R15** 4.7 kΩ pull-up) |
 
-(This frees the old EXC pins GPIO14 and GPIO2.)
+`SELECT` and `REVERSE` are logic inputs to the '139/'157, not switch drivers, so
+neither needs a pulldown — **R11 is the one part that makes this subsystem
+boot-safe**, because the decoder enable is active-low and GPIO 17 floats at reset.
+REVERSE can therefore live on GPIO 14 despite its internal pull-up: a polarity
+selected at reset goes nowhere while the decoder is disabled. GPIO 2 remains the
+only spare native pin.
 
 ## Components (this subsystem)
 
 | Ref | Part | Value | Role |
 |-----|------|------:|------|
-| Isolated DC-DC | Murata NMA1212 (or eq.) | 1 W, ±12 V | +12VA / GNDA / −12VA |
-| Drive decoder | 74HC139 | 3.3 V | {SELECT,ENABLE,REVERSE} → 4 switch drives + interlock |
-| Sense mux | 74HC157 | 3.3 V | SELECT routes active boiler's POS/NEG → 2 pins |
-| Drive optos (×4) | PC817 (V(CEO) ≥ 24 V) | — | 74HC139 out → **switch rod to ±12VA directly** (opto *is* the switch) |
-| Drive LED series R (×4) | resistor | 330 Ω | decoder output → PC817 LED (→ ~220 Ω for low-CTR parts) |
-| Sense optos (×4) | PC817 | — | per-boiler, per-direction (anti-parallel LED pair) |
-| Sense pull-ups (×4) | resistor | 47 kΩ → 3.3 V | opto output → 74HC157 inputs (low CTR at 1–2 mA) |
-| Rlim (×2) | resistor | 4.7 kΩ | ~1–2 mA probe current |
+| U12 | Murata NMA1212SC (or eq.) | 1 W, ±12 V | isolated +12VA / GNDA / −12VA |
+| U16 | 74HC139 | 3.3 V | {SELECT,ENABLE,REVERSE} → 4 switch drives + interlock |
+| U15 | 74HC157 | 3.3 V | SELECT routes active boiler's POS/NEG → 2 pins; `Ē` → GND |
+| U10 / U11 | PC817 (V(CEO) ≥ 24 V) | — | brew drive P / N — **the opto *is* the switch** |
+| U3 / U13 | PC817 (V(CEO) ≥ 24 V) | — | steam drive P / N |
+| R3 / R4 / R5 / R6 | resistor | 330 Ω | decoder output → drive-opto LED (→ ~220 Ω for low-CTR parts) |
+| U8 / U14 | PC817 | — | brew sense POS / NEG (anti-parallel pair, in the rod line) |
+| U17 / U9 | PC817 | — | steam sense POS / NEG |
+| R19 / R18 | resistor | 47 kΩ → 3.3 V | brew sense POS / NEG pull-up, on the opto collector (= '157 input) |
+| R21 / R20 | resistor | 47 kΩ → 3.3 V | steam sense POS / NEG pull-up, on the opto collector (= '157 input) |
+| R8 / R7 | resistor | 4.7 kΩ | Rlim, brew / steam — ~1–2 mA probe current |
+| R11 | resistor | 4.7 kΩ → 3.3 V | `ENABLE` pull-up: decoder disabled at boot |
 
 Values are starting points — tune `Rlim` for your water hardness and the firmware
-thresholds. If you later confirm the bodies are always common, the four sense
-optos could collapse to two shared ones (drop per-boiler independence).
+thresholds.
+
+> **Don't collapse the four sense optos to two shared ones.** It looks tempting now
+> that both bodies are commoned at `GNDA`, but the only place a shared pair can sit
+> is the body return — and there the two boilers' pairs end up in parallel across
+> the earth tie. That halves the current through each LED (straight into the CTR
+> cliff above) and lets a fault in one channel reroute the other boiler's return
+> current silently, so a wet boiler can read dry. Keep one pair per rod line.

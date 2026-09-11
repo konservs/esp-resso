@@ -109,8 +109,9 @@ void hal_flow_reset(void)
 #define LEVEL_DWELL_SLOW_US 600  /* ~0.8 kHz probe (second frequency)          */
 #define LEVEL_GAP_US        50   /* idle gap between polarity flips            */
 
-/* Sense opto output is active-low (its transistor pulls the pulled-up MCU input
- * to GND while the water conducts). Invert here if your wiring differs. */
+/* Sense is active-low: while the water conducts, the opto transistor pulls its
+ * pulled-up '157 input to GND, and the mux passes that low through to the MCU
+ * pin. Invert here if your wiring differs. */
 static inline bool level_conducting(int gpio)
 {
     return gpio_get_level(gpio) == 0;
@@ -145,9 +146,10 @@ espresso_result_t hal_level_init(void)
     gpio_set_level(PIN_LEVEL_SELECT, LEVEL_SELECT_BREW);
     gpio_set_level(PIN_LEVEL_REVERSE, LEVEL_POS);
 
-    /* Sense + reservoir inputs. GPIO35/36/39 are input-only with no internal
-     * pulls; external pull-ups on the sense-mux outputs / float switch pull the
-     * line to GND when active. */
+    /* Sense + reservoir inputs; all three are input-only with no internal pulls.
+     * GPIO35/36 need none — they are the 74HC157's push-pull outputs. The 47k
+     * pull-ups (R18-R21) are one level back, on the opto collectors feeding the
+     * mux. GPIO39 is a bare float switch to GND, so it does need R15. */
     gpio_config_t in = {
         .pin_bit_mask = (1ULL << PIN_LEVEL_SENSE_POS) |
                         (1ULL << PIN_LEVEL_SENSE_NEG) |

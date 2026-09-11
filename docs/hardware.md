@@ -56,27 +56,35 @@ Change wiring there.
 | RTD steam CS | 15 | Strapping pin, but CS idles high → boot-safe |
 | I2C SDA | 21 | Shared: SSD1306 + PCF8574 |
 | I2C SCL | 22 | Shared: SSD1306 + PCF8574 |
-| SSR brew low | 25 | Active-high → ULN2003 → brew lower-element SSR |
-| SSR brew high | 33 | Active-high → ULN2003 → brew upper-element SSR |
-| SSR steam low | 26 | Active-high → ULN2003 → steam lower-element SSR |
-| SSR steam high | 14 | Active-high → ULN2003 → steam upper-element SSR; **ext. pulldown** (GPIO14 idles pulled-up at reset → heater off at boot) |
-| Pump | 27 | Active-high → ULN2003 → pump SSR |
-| Fill valve (brew) | 13 | Active-high → ULN2003 → fill relay |
-| Fill valve (steam) | 4 | Active-high → ULN2003 → fill relay |
+| SSR brew low | 26 | Active-high → ULN2003 → brew lower-element SSR; **R10** 10 kΩ pulldown |
+| SSR brew high | 33 | Active-high → ULN2003 → brew upper-element SSR; **R22** 10 kΩ pulldown |
+| SSR steam low | 25 | Active-high → ULN2003 → steam lower-element SSR; **R9** 10 kΩ pulldown |
+| SSR steam high | 32 | Active-high → ULN2003 → steam upper-element SSR; **R17** 10 kΩ pulldown |
+| Pump | 27 | Active-high → ULN2003 → pump SSR; **R16** 10 kΩ pulldown |
+| Fill valve (brew) | 13 | Active-high → ULN2003 → fill relay; **R23** 10 kΩ pulldown |
+| Fill valve (steam) | 4 | Active-high → ULN2003 → fill relay; **R24** 10 kΩ pulldown, and GPIO4 idles pulled-down internally → valve shut at boot |
 | Flow meter | 34 | **Input-only**, needs external pull-up |
 | Level SELECT | 16 | boiler select → 74HC139 A1 + 74HC157 sel |
-| Level ENABLE | 17 | drive enable → 74HC139 Ē (active-low; idle-off at boot) |
-| Level REVERSE | 32 | polarity → 74HC139 A0 |
+| Level ENABLE | 17 | drive enable → 74HC139 Ē (active-low); **R11** 4.7 kΩ pull-up → drive idle-off at boot |
+| Level REVERSE | 14 | polarity → 74HC139 A0; idles high at reset, harmless because R11 gates the decoder |
 | Level sense + | 35 | **Input-only**, 74HC157 out (POS opto) |
 | Level sense − | 36 | **Input-only**, 74HC157 out (NEG opto) |
 | Level — reservoir | 39 | **Input-only**, float switch, external pull-up |
 
 The UI buttons (A/B) and machine switches (brew lever, steam knob) are **not**
 on native GPIOs — they hang off the PCF8574 I2C expander (below), which freed up
-native pins. **GPIO 16/17/32** now carry the level control lines
-(SELECT/ENABLE/REVERSE); **GPIO 33** and the freed **GPIO 14** now drive the two
-upper heater-element SSRs, leaving **GPIO 2** (a strapping pin) as the only spare. (JTAG is not wired — see
+native pins. **GPIO 16/17/14** carry the level control lines
+(SELECT/ENABLE/REVERSE); **GPIO 33** and **GPIO 32** drive the two upper
+heater-element SSRs; the steam fill valve has **GPIO 4**. That leaves **GPIO 2**
+(a strapping pin) as the only spare. (JTAG is not wired — see
 [level-sensing.md](level-sensing.md).)
+
+Pin choices here are driven as much by **reset pull state** as by function, since
+every actuator is active-high through the ULN2003: GPIO 14/15 idle pulled *up*,
+GPIO 2/4/12 idle pulled *down*, and 13/16/17/25/26/27/32/33 float. So the steam
+fill valve sits on GPIO 4 (pulled down = shut at boot), while GPIO 14 — which
+idles high — carries only level REVERSE, a logic input the decoder ignores while
+R11 holds it disabled. See the caveats below.
 
 ### I2C input expander (PCF8574, address 0x20)
 
@@ -96,10 +104,18 @@ For more than 8 inputs, add a second expander at a different address.
 
 ### ESP32 pin caveats baked into the choices
 
-- GPIO **34/35/36/39** are input-only and have **no internal pull resistors** —
-  add external pull-ups/downs for the flow meter and level probes.
-- GPIO **0/2/12** are strapping pins and are avoided as driven outputs. GPIO 15
-  is used only as a chip-select (idle high), which is safe at boot. **GPIO 12**
+- GPIO **34/35/36/39** are input-only and have **no internal pull resistors**, so
+  any *passive* source on them needs an external pull. That applies to the flow
+  meter (**R12**, 4.7 kΩ → 3.3 V) and the reservoir float switch (**R15**,
+  4.7 kΩ → 3.3 V), both of which just close to GND. It does **not** apply to the
+  level sense lines: GPIO 35/36 are fed by the 74HC157's push-pull CMOS outputs
+  and are actively driven both ways. The 47 kΩ sense pull-ups (**R19/R18** brew,
+  **R21/R20** steam) belong one stage earlier, on the opto collectors that feed the
+  mux — see [level-sensing.md](level-sensing.md), where the value is set by
+  sense-opto CTR rather than by anything the MCU needs.
+- GPIO **0/2/5/12/15** are strapping pins and are avoided as driven outputs.
+  GPIO 5 and 15 are used only as chip-selects (idle high), which is safe at boot.
+  **GPIO 12**
   additionally selects the module's flash voltage and must be **low at reset**: it
   is left as a no-connect (the chip's internal pull-down holds it low → 3.3 V
   flash); an optional ~10 kΩ pull-down to GND adds margin. Never pull GPIO 12 high.
@@ -108,10 +124,21 @@ For more than 8 inputs, add a second expander at a different address.
   them unconnected** (no-connect flags in the schematic, as verified); do not tie
   them to GND or route them anywhere, or the module won't boot / the flash can
   corrupt.
-- GPIO **14** idles with a weak **internal pull-up** at reset, so the steam
-  upper-element heater SSR on it needs an **external pulldown** on the ULN2003
-  input to stay off during the boot window (before `hal_heater_init` drives it
-  low). Fit pulldowns on the other three heater inputs too, as belt-and-braces.
+- **Every ULN2003 input carries a 10 kΩ pulldown to GND** — R9/R10/R17/R22
+  (heaters), R16 (pump), R23/R24 (fill valves). These are not optional. The
+  firmware only drives these pins low once `espresso_hal_init()` reaches the
+  actuator init, which is several hundred milliseconds after reset (ROM
+  bootloader → `app_main` → storage and temp init first). Until then the
+  resistors alone decide whether a heater, the pump, or a fill valve is
+  energised.
+- GPIO **14** idles with a weak **internal pull-up** at reset, so no active-high
+  load may sit on it. It carries level **REVERSE**, where idling high is harmless:
+  the 74HC139 is held disabled by R11, so no rod is driven regardless of polarity.
+  Nothing on this pin needs a pulldown.
+- The **level drive** relies on **R11** (4.7 kΩ pull-up on `LEVEL_ENABLE`) to keep
+  the 74HC139 disabled from reset until `hal_level_init()` runs — GPIO 17 floats,
+  and the decoder enable is active-low, so without R11 a rod could be energised at
+  boot. Do not remove it.
 - The shared I2C bus wants **external ~4.7 kΩ pull-ups** on SDA/SCL (the OLED
   breakout usually carries them); the firmware also enables the weak internal
   pull-ups as a fallback.

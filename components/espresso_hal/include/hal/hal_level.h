@@ -42,7 +42,7 @@ bool hal_level_present(hal_level_id_t level);
  * While enabled the level task publishes no real readings, so the probe atomics
  * keep their seeded "full" value and the control loop leaves the fill valves
  * shut. Set back to 0 to restore normal fast sensing; remove before shipping. */
-#define LEVEL_DEBUG_SWEEP  1
+#define LEVEL_DEBUG_SWEEP 0
 
 #if LEVEL_DEBUG_SWEEP
 /** Bench aid: infinite ~2 s-per-step level-drive sweep. Never returns; called by
