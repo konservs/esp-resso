@@ -15,15 +15,38 @@
 extern "C" {
 #endif
 
+/**
+ * @brief How the probe is wired to the front-end.
+ *
+ * This must match the physical wiring (and the board's RTDIN/FORCE jumpers).
+ * A mismatch is not a small error: a 3-wire probe read in 2-wire mode reports a
+ * permanent open-circuit fault, because the chip expects the lead-compensation
+ * connection it is not configured to use.
+ *
+ * The chip itself only distinguishes 3-wire from the other two — 2- and 4-wire
+ * share a setting — but naming all three keeps the call site honest about what
+ * is actually soldered.
+ */
+typedef enum {
+    MAX31865_2WIRE = 0,
+    MAX31865_3WIRE,
+    MAX31865_4WIRE
+} max31865_wires_t;
+
 typedef struct {
     spi_device_handle_t spi;
     float rref;     /**< Reference resistor in ohms (e.g. 430 for PT100). */
     float rnominal; /**< RTD nominal resistance at 0 C (RTD_PT100_R0).    */
+    uint8_t config; /**< Configuration byte held for this device, so a fault
+                     *   clear rewrites its wiring mode rather than a default. */
 } max31865_t;
 
-/** Attach a MAX31865 to an already-initialised SPI bus. */
+/**
+ * @brief Attach a MAX31865 to an already-initialised SPI bus.
+ * @param wires How the probe is physically wired; see ::max31865_wires_t.
+ */
 esp_err_t max31865_add(max31865_t *dev, spi_host_device_t host, int cs_gpio,
-                       float rref, float rnominal);
+                       float rref, float rnominal, max31865_wires_t wires);
 
 /**
  * @brief Read and convert one temperature sample.

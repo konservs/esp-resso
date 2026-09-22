@@ -18,7 +18,9 @@
  *   - "/"               a small self-contained HTML dashboard,
  *   - "/api/telemetry"  a JSON snapshot the page polls once per second,
  *   - "/api/display"    the raw OLED framebuffer, mirrored on a canvas, and
- *   - "/api/forget"     clears saved Wi-Fi and reboots into the setup portal.
+ *   - "/api/forget"     clears saved Wi-Fi and reboots into the setup portal,
+ *   - "/api/debug/pulse" (admin) drives one actuator for a couple of seconds,
+ *                       for bench-testing relays. See core/debug_pulse.h.
  *
  * As the setup portal (SoftAP) it serves:
  *   - "/"               a setup page that scans and lists nearby networks,
@@ -108,6 +110,10 @@ static const char DASHBOARD_HTML[] =
     ".ok{color:#7cd97c}.warn{color:#e0b02b}.err{color:#e0552b}"
     "#state{font-weight:600;color:#e0892b}"
     "button{background:#3a2e24;color:#caa;border:0;border-radius:8px;padding:.5rem .8rem;font-size:.85rem}"
+    ".btns{display:flex;flex-wrap:wrap;gap:.4rem;margin:.4rem 0 .6rem}"
+    ".btns button{flex:1 1 auto}"
+    "button:disabled{opacity:.45}"
+    ".note{color:#9a8;font-size:.78rem;margin:.1rem 0 .5rem}"
     "#oled{display:block;width:100%;max-width:512px;margin:.2rem auto 1rem;"
     "image-rendering:pixelated;background:#000;border-radius:6px}"
     ".ns{background:#2a1512;border:1px solid #e0552b;color:#f0b8ab;"
@@ -140,7 +146,21 @@ static const char DASHBOARD_HTML[] =
     "<div class='row'><span class='k'>Fill &mdash; steam</span><span id='fills' class='st'>--</span></div>"
     "<div class='row'><span class='k'>Flow</span><span id='flow' class='st'>--</span></div>"
     "</div>"
-    "<div class='card' id='admin' style='display:none'><button onclick='forget()'>Reconfigure Wi-Fi</button></div>"
+    "<div class='card' id='admin' style='display:none'>"
+    "<div class='hd'>Output test</div>"
+    "<div class='note'>Drives one output for 2&nbsp;s. Works during a safety "
+    "trip (no output here is a heater); refused only while a shot or backflush "
+    "is running. Heaters are not exposed &mdash; the dry-fire interlock "
+    "protects them and this bypasses it.</div>"
+    "<div class='btns'>"
+    "<button id='p_pump' onclick=\"pulse('pump')\">Pump</button>"
+    "<button id='p_fill_brew' onclick=\"pulse('fill_brew')\">Brew fill</button>"
+    "<button id='p_fill_steam' onclick=\"pulse('fill_steam')\">Steam fill</button>"
+    "</div>"
+    "<div class='row'><span class='k'>Pulse</span>"
+    "<span id='pulse' class='st'>Idle</span></div>"
+    "<div class='btns'><button id='p_stop' onclick=\"pulse('none')\" disabled>Stop</button></div>"
+    "<button onclick='forget()'>Reconfigure Wi-Fi</button></div>"
     "<script>"
     "function g(id){return document.getElementById(id)}"
     "var LVL=['Full','Filling','Low','Error','Unknown'],LC=['ok','warn','warn','err','warn'];"
@@ -168,7 +188,19 @@ static const char DASHBOARD_HTML[] =
     "setValve(g('fillb'),d.fill.brew);setValve(g('fills'),d.fill.steam);"
     "g('flow').className='st';g('flow').textContent=d.flow.mls.toFixed(1)+' ml/s';"
     "g('admin').style.display=d.role==='admin'?'':'none';"
+    "setPulse(d.debug);"
     "}catch(e){g('state').textContent='offline'}}"
+    "var POUT=['pump','fill_brew','fill_steam'],PNAME={pump:'Pump',"
+    "fill_brew:'Brew fill',fill_steam:'Steam fill'};"
+    "function setPulse(o){var on=o&&o.out&&o.out!=='none';"
+    "g('pulse').textContent=on?(PNAME[o.out]||o.out)+' \\u2014 '+(o.ms/1000).toFixed(1)+'s':'Idle';"
+    "g('pulse').className='st '+(on?'warn':'');"
+    "g('p_stop').disabled=!on;"
+    "POUT.forEach(function(k){g('p_'+k).disabled=on&&o.out!==k})}"
+    "async function pulse(o){try{"
+    "const r=await fetch('/api/debug/pulse?out='+encodeURIComponent(o),{method:'POST'});"
+    "const d=await r.json();if(!d.ok)alert('Refused: '+(d.why||r.status));tick()"
+    "}catch(e){alert('Request failed')}}"
     "async function forget(){if(!confirm('Forget Wi-Fi and reboot into setup mode?'))return;"
     "await fetch('/api/forget',{method:'POST'});"
     "document.body.innerHTML='<h1>Rebooting into setup mode...</h1>"
@@ -432,7 +464,7 @@ static esp_err_t telemetry_get(httpd_req_t *req)
     app_telemetry_t t;
     app_get_telemetry(&t);
 
-    char buf[768];
+    char buf[896];
     const int n = snprintf(
         buf, sizeof(buf),
         "{\"state\":\"%s\",\"safety\":\"%s\",\"ready\":%s,\"role\":\"%s\","
@@ -443,6 +475,7 @@ static esp_err_t telemetry_get(httpd_req_t *req)
         "\"shot\":{\"ml\":%.1f,\"ms\":%lu},"
         "\"pump\":{\"cooling\":%s,\"ms\":%lu},"
         "\"fill\":{\"brew\":%s,\"steam\":%s},"
+        "\"debug\":{\"out\":\"%s\",\"ms\":%lu},"
         "\"flow\":{\"mls\":%.2f}}",
         machine_state_name(t.state), safety_trip_name(t.safety_trip),
         t.both_ready ? "true" : "false",
@@ -462,6 +495,7 @@ static esp_err_t telemetry_get(httpd_req_t *req)
         (unsigned long)t.pump_cooldown_ms,
         t.valve_brew_open ? "true" : "false",
         t.valve_steam_open ? "true" : "false",
+        debug_pulse_out_name(t.debug_out), (unsigned long)t.debug_ms,
         (double)t.flow_rate_ml_s);
 
     httpd_resp_set_type(req, "application/json");
@@ -485,6 +519,59 @@ static esp_err_t display_get(httpd_req_t *req)
     const esp_err_t r = httpd_resp_send(req, (const char *)fb, got);
     free(fb);
     return r;
+}
+
+/* Admin bench test: drive one actuator for a fixed couple of seconds.
+ *
+ * POST /api/debug/pulse?out=pump|fill_brew|fill_steam   start
+ * POST /api/debug/pulse?out=none                        cancel
+ *
+ * The duration is fixed in firmware rather than taken from the request, so a
+ * malformed or hostile query cannot ask for a long one. Everything else about
+ * the override — what may be driven, when it is allowed, and expiry — is
+ * decided by the core (see core/debug_pulse.h) and the control loop. */
+static esp_err_t debug_pulse_post(httpd_req_t *req)
+{
+    if (check_auth(req) < ROLE_ADMIN) {
+        return deny(req);
+    }
+
+    char query[64] = { 0 };
+    char out_name[24] = { 0 };
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK ||
+        httpd_query_key_value(query, "out", out_name, sizeof(out_name)) != ESP_OK) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_set_type(req, "application/json");
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"why\":\"missing out=\"}");
+    }
+
+    const debug_out_t out = debug_pulse_out_from_name(out_name);
+    if (out == DEBUG_OUT_NONE && strcmp(out_name, "none") != 0) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_set_type(req, "application/json");
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"why\":\"unknown output\"}");
+    }
+
+    char body[96];
+    int n;
+    switch (app_debug_pulse(out)) {
+    case APP_PULSE_OK:
+        n = snprintf(body, sizeof(body), "{\"ok\":true,\"out\":\"%s\",\"ms\":%u}",
+                     debug_pulse_out_name(out),
+                     (unsigned)(out == DEBUG_OUT_NONE ? 0u : DEBUG_PULSE_MS));
+        break;
+    case APP_PULSE_REFUSED:
+        httpd_resp_set_status(req, "409 Conflict");
+        n = snprintf(body, sizeof(body),
+                     "{\"ok\":false,\"why\":\"a shot or backflush is running\"}");
+        break;
+    default:
+        httpd_resp_set_status(req, "400 Bad Request");
+        n = snprintf(body, sizeof(body), "{\"ok\":false,\"why\":\"unknown output\"}");
+        break;
+    }
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_send(req, body, n);
 }
 
 static esp_err_t forget_post(httpd_req_t *req)
@@ -737,6 +824,7 @@ static void start_dashboard(void)
     register_uri("/api/telemetry", HTTP_GET, telemetry_get);
     register_uri("/api/display", HTTP_GET, display_get);
     register_uri("/api/forget", HTTP_POST, forget_post);
+    register_uri("/api/debug/pulse", HTTP_POST, debug_pulse_post);
     ESP_LOGI(TAG, "dashboard listening on port %d", CONFIG_ESPRESSO_DASHBOARD_PORT);
 }
 

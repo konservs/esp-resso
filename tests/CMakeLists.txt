@@ -61,6 +61,7 @@ set(CORE_TESTS
     test_pump_guard
     test_state_machine
     test_safety
+    test_debug_pulse
     test_settings
     test_buttons
     test_ui)

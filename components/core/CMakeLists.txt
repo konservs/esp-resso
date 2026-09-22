@@ -14,6 +14,7 @@ set(CORE_SRCS
     src/pump_guard.c
     src/state_machine.c
     src/safety.c
+    src/debug_pulse.c
     src/settings.c
     src/buttons.c
     src/ui.c)

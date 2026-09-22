@@ -43,6 +43,12 @@ typedef struct {
 
 /** Per-step inputs sampled by the control/safety task. */
 typedef struct {
+    bool     sensors_valid;    /**< A real reading has been taken. While false
+                                *   (boot, before the control loop's first
+                                *   sample) every other field below is a
+                                *   placeholder rather than a measurement, so
+                                *   the supervisor holds off instead of
+                                *   latching a trip on it. */
     temp_c_t brew_temp;
     temp_c_t steam_temp;
     bool     brew_sensor_ok;

@@ -19,7 +19,7 @@ A dual-boiler E61 machine:
 |----:|------|-------|
 | 1 | ESP32 dev module (WROOM-32) | Dual-core, classic ESP32 |
 | 2 | MAX31865 RTD amplifier | One per boiler; 430 Ω reference for PT100 |
-| 2 | PT100 RTD probe | M4/M5 threaded or clamp, boiler temperature |
+| 2 | PT100 RTD probe | M4/M5 threaded or clamp, boiler temperature. **3-wire** — the firmware configures the MAX31865 to match (`RTD_WIRES` in `hal_esp32_temp.c`), and the board's RTDIN/FORCE jumpers must agree |
 | 4 | Solid-state relay (zero-cross) | Boiler heaters — **two per boiler** (lower + upper element, ~400 W each), slow-PWM; DC-input, driven at 12 V via the ULN2003. Firmware runs at most 3 at once on a 120 V/15 A circuit — see the load guard in [control.md](control.md) |
 | 1 | Pump + zero-cross SSR | **Ulka EFX5** vibratory (rated 2 min ON / 1 min OFF — firmware enforces the duty cycle, see [control.md](control.md)); zero-cross SSR enables pulse-skip flow. A rotary pump also fits — size the SSR for motor inrush |
 | 2 | Mains solenoid valve (230/120 VAC) | Brew / steam auto-fill inlets; OEM Olab type (e.g. Profitec US1005) |
@@ -164,7 +164,10 @@ protection, and the per-rail power budget: **[power.md](power.md)**.
 
 ## Sensing details
 
-- **Temperature:** PT100 over MAX31865 (SPI, mode 1). Resistance→temperature
+- **Temperature:** 3-wire PT100 over MAX31865 (SPI, mode 1). The wiring mode is
+  set per device in `hal_esp32_temp.c` and **must match what is soldered**: a
+  3-wire probe read in 2-wire mode reports a permanent open-circuit fault on
+  every read. Resistance→temperature
   conversion is the portable `core/rtd.c` (Callendar–Van Dusen), unit-tested on
   the host. Sensor open/short is reported via the MAX31865 fault bit and becomes
   a safety trip. A **near-zero or absurd resistance** — an absent/silent

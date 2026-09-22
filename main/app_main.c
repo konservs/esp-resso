@@ -15,6 +15,7 @@
 #include "hal/hal_input.h"
 #include "hal/hal_level.h"
 #include "hal/hal_storage.h"
+#include "hal/hal_time.h"
 
 static const char *TAG = "app";
 
@@ -53,6 +54,8 @@ void app_get_telemetry(app_telemetry_t *out)
     out->reservoir_ok = g_app.reservoir_present;
     out->valve_brew_open = g_app.valve_brew_open;
     out->valve_steam_open = g_app.valve_steam_open;
+    out->debug_out = g_app.debug_out;
+    out->debug_ms = g_app.debug_ms;
     xSemaphoreGive(g_app.lock);
 
     /* Component health from the HAL (cached flags, no bus traffic). */
@@ -64,6 +67,28 @@ void app_get_telemetry(app_telemetry_t *out)
     out->button_b = atomic_load(&g_app.button_b);
     out->switch_brew = atomic_load(&g_app.switch_brew);
     out->switch_steam = atomic_load(&g_app.switch_steam);
+}
+
+app_pulse_result_t app_debug_pulse(debug_out_t out)
+{
+    app_pulse_result_t rc = APP_PULSE_OK;
+
+    xSemaphoreTake(g_app.lock, portMAX_DELAY);
+    if (out == DEBUG_OUT_NONE) {
+        debug_pulse_stop(&g_app.debug_pulse); /* explicit cancel is always allowed */
+    } else if (!debug_pulse_permitted(machine_state(&g_app.machine))) {
+        rc = APP_PULSE_REFUSED;
+    } else if (!debug_pulse_start(&g_app.debug_pulse, out, hal_time_ms(),
+                                  DEBUG_PULSE_MS)) {
+        rc = APP_PULSE_BAD_OUTPUT;
+    }
+    xSemaphoreGive(g_app.lock);
+
+    if (rc == APP_PULSE_OK) {
+        ESP_LOGW(TAG, "debug pulse: %s for %u ms", debug_pulse_out_name(out),
+                 (unsigned)(out == DEBUG_OUT_NONE ? 0u : DEBUG_PULSE_MS));
+    }
+    return rc;
 }
 
 /* Load persisted settings, falling back to validated defaults. */
@@ -95,6 +120,7 @@ static void init_controllers(app_state_t *app)
     boiler_init(&app->steam_boiler, s->steam_setpoint, &s->steam_pid, 2.0f);
     app_apply_brew_profile(app);
     pump_guard_init(&app->pump_guard, &s->pump);
+    debug_pulse_init(&app->debug_pulse);
     safety_init(&app->safety, &s->safety);
     machine_init(&app->machine);
 }

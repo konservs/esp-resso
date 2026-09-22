@@ -16,6 +16,7 @@ static safety_t make_safety(void)
 static safety_inputs_t healthy_inputs(void)
 {
     safety_inputs_t in = {
+        .sensors_valid = true,
         .brew_temp = 93.0f,
         .steam_temp = 125.0f,
         .brew_sensor_ok = true,
@@ -80,6 +81,44 @@ static void test_progress_resets_heat_timer(void)
     TEST_ASSERT_EQUAL_INT(SAFETY_OK, safety_update(&s, &in, 1500));
 }
 
+/* Regression: the supervisor ticks before the control loop takes its first
+ * sample, so it must not read the zero-initialised inputs as a faulted probe.
+ * Doing so latched SENSOR_FAULT on every power-up. */
+static void test_no_reading_yet_does_not_trip(void)
+{
+    safety_t s = make_safety();
+    safety_inputs_t in = { 0 }; /* what the shared state looks like at boot */
+    TEST_ASSERT_EQUAL_INT(SAFETY_OK, safety_update(&s, &in, 0));
+    TEST_ASSERT_EQUAL_INT(SAFETY_OK, safety_update(&s, &in, 50));
+    TEST_ASSERT_FALSE(safety_tripped(&s));
+
+    /* ...and once real readings arrive, the rules apply as normal. */
+    safety_inputs_t real = healthy_inputs();
+    TEST_ASSERT_EQUAL_INT(SAFETY_OK, safety_update(&s, &real, 100));
+    real.brew_sensor_ok = false;
+    TEST_ASSERT_EQUAL_INT(SAFETY_TRIP_SENSOR_FAULT, safety_update(&s, &real, 150));
+}
+
+/* A heater left on across the boot window must not accumulate run time before
+ * there is a temperature to judge progress by. */
+static void test_no_reading_yet_holds_heat_timer(void)
+{
+    safety_t s = make_safety();
+    safety_inputs_t in = { 0 };
+    in.any_heater_on = true;
+    in.making_progress = false;
+    safety_update(&s, &in, 0);
+    TEST_ASSERT_EQUAL_INT(SAFETY_OK, safety_update(&s, &in, 5000));
+
+    /* The timer starts from the first real reading, not from boot. */
+    safety_inputs_t real = healthy_inputs();
+    real.any_heater_on = true;
+    real.making_progress = false;
+    TEST_ASSERT_EQUAL_INT(SAFETY_OK, safety_update(&s, &real, 5000));
+    TEST_ASSERT_EQUAL_INT(SAFETY_OK, safety_update(&s, &real, 5900));
+    TEST_ASSERT_EQUAL_INT(SAFETY_TRIP_HEAT_TIMEOUT, safety_update(&s, &real, 6000));
+}
+
 static void test_clear_resets(void)
 {
     safety_t s = make_safety();
@@ -99,6 +138,8 @@ int main(void)
     RUN_TEST(test_sensor_fault_trips);
     RUN_TEST(test_heat_timeout_trips);
     RUN_TEST(test_progress_resets_heat_timer);
+    RUN_TEST(test_no_reading_yet_does_not_trip);
+    RUN_TEST(test_no_reading_yet_holds_heat_timer);
     RUN_TEST(test_clear_resets);
     return UNITY_END();
 }

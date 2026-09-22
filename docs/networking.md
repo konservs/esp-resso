@@ -80,6 +80,7 @@ in `idf.py monitor`; with a static IP it's the address you configured.
     "shot":  { "ml": 0.0, "ms": 0 },
     "pump":  { "cooling": false, "ms": 0 },
     "fill":  { "brew": false, "steam": false },
+    "debug": { "out": "none", "ms": 0 },
     "flow":  { "mls": 0.0 }
   }
   ```
@@ -93,7 +94,39 @@ in `idf.py monitor`; with a static IP it's the address you configured.
   reading yet, or the level task went stale). `pump.cooling` +
   `pump.ms` are the duty-cycle guard (rest remaining); `fill.brew`/`fill.steam`
   are the auto-fill solenoid commands; `flow.mls` is the smoothed flow rate in
-  ml/s.
+  ml/s. `debug.out`/`debug.ms` report a running output test (below) — the output
+  being driven and the milliseconds left on it.
+- **`/api/debug/pulse?out=…`** (POST, **admin only**) — bench output test: drive
+  one actuator directly for two seconds, so you can confirm a relay switches and
+  that the right load is behind it. `out` is `pump`, `fill_brew`, `fill_steam`,
+  or `none` to cancel early.
+
+  ```
+  POST /api/debug/pulse?out=pump    -> {"ok":true,"out":"pump","ms":2000}
+  POST /api/debug/pulse?out=none    -> {"ok":true,"out":"none","ms":0}
+  ```
+
+  Refused with **409** only while a shot or backflush is running (they own the
+  pump); **400** for an unknown output. The dashboard exposes these as buttons
+  in the admin card, with a live countdown and a Stop button.
+
+  **A latched safety trip does not block a pulse.** Every trip the supervisor
+  raises is about temperature, and none of these outputs is a heater — gating on
+  it only made the feature unavailable on the half-wired bench machine it exists
+  to diagnose, which trips `SENSOR_FAULT` on every boot. This holds only while
+  no heating element is drivable from here; adding one means restoring the gate.
+
+  **The heating elements are deliberately not exposed.** The dry-fire interlock
+  that keeps an element from being energised without water lives in the control
+  loop, and this feature exists to bypass the control loop — so a heater button
+  would be a button for destroying an element. Test the heater SSRs with the
+  boilers filled and the normal PID, or with the elements disconnected.
+
+  The duration is fixed in firmware rather than taken from the request, and the
+  window is expired by the control loop rather than by whoever started it
+  ([`core/debug_pulse.h`](../components/core/include/core/debug_pulse.h)): a
+  client that posts and then disappears, or a Wi-Fi task that dies mid-pulse,
+  cannot leave an output energised. Only one output runs at a time.
 
 The data comes from `app_get_telemetry()`
 ([`main/app_main.c`](../main/app_main.c)), which copies a consistent snapshot

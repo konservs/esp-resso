@@ -57,6 +57,11 @@ void control_task(void *arg)
     float flow_rate = 0.0f;
     const float FLOW_RATE_ALPHA = 0.25f;
 
+    /* Last logged probe health, so the report below fires on change only. Seeded
+     * to "ok" so the first bad reading is what gets logged, not the boot state. */
+    bool prev_bt_ok = true, prev_st_ok = true;
+    uint8_t prev_bt_fault = 0, prev_st_fault = 0;
+
     for (;;) {
         vTaskDelayUntil(&last, period);
 
@@ -170,6 +175,7 @@ void control_task(void *arg)
 
         app->brew_temp = bt;
         app->steam_temp = st;
+        app->temp_update_ms = now;
         app->brew_duty = brew_duty;
         app->steam_duty = steam_duty;
         for (int i = 0; i < LOAD_HEATER_COUNT; i++) {
@@ -181,11 +187,40 @@ void control_task(void *arg)
          * A faulted probe holds the fill valve shut: we can't trust the reading,
          * and opening the valve on a bad "dry" reading risks overfilling. */
         const bool can_fill = (state != MACHINE_FAULT) && reservoir_ok;
-        const bool brew_filling = can_fill && brew_dry;
-        const bool steam_filling = can_fill && steam_dry;
+        bool brew_filling = can_fill && brew_dry;
+        bool steam_filling = can_fill && steam_dry;
+        /* Level view reflects the auto-fill decision, before any debug override
+         * below — a bench pulse should not read as "the machine is filling". */
         app->brew_level = level_of(brew_trusted, brew_full, brew_filling, brew_fault, reservoir_ok);
         app->steam_level = level_of(steam_trusted, steam_full, steam_filling, steam_fault, reservoir_ok);
         app->reservoir_present = reservoir_ok;
+
+        /* Admin bench override. Applied last so it wins over the normal
+         * decisions above, but only over the pump and the fill valves — the
+         * heaters are deliberately not exposed (see core/debug_pulse.h).
+         *
+         * The window is expired here rather than by whoever started it, so a
+         * disconnected dashboard cannot leave an output energised. Re-check the
+         * state every cycle too: a lever pulled mid-pulse moves us to BREWING,
+         * and the brew sequencer must get the pump back immediately.
+         *
+         * This runs after pump_guard_update() above on purpose, so a couple of
+         * seconds of bench testing does not count against the Ulka's brewing
+         * duty-cycle budget. */
+        debug_out_t dbg = debug_pulse_active(&app->debug_pulse, now);
+        if (dbg != DEBUG_OUT_NONE && !debug_pulse_permitted(state)) {
+            debug_pulse_stop(&app->debug_pulse);
+            dbg = DEBUG_OUT_NONE;
+        }
+        switch (dbg) {
+        case DEBUG_OUT_PUMP:       pump_on = true; pump_duty = 1.0f; break;
+        case DEBUG_OUT_FILL_BREW:  brew_filling = true;  break;
+        case DEBUG_OUT_FILL_STEAM: steam_filling = true; break;
+        default: break;
+        }
+        app->debug_out = dbg;
+        app->debug_ms = debug_pulse_remaining_ms(&app->debug_pulse, now);
+
         app->valve_brew_open = brew_filling;
         app->valve_steam_open = steam_filling;
 
@@ -217,8 +252,23 @@ void control_task(void *arg)
         }
         prev_ready = both_ready;
 
-        if (!bt.ok || !st.ok) {
-            ESP_LOGW(TAG, "sensor fault brew_ok=%d steam_ok=%d", bt.ok, st.ok);
+        /* Report probe health on change only: a latched fault otherwise repeats
+         * every cycle and buries everything else in the log. The fault byte is
+         * the MAX31865's, or the driver's stand-in for a reading that is not a
+         * temperature at all (0x40 near-zero resistance, 0x80 absurdly high,
+         * 0xFF the SPI transfer itself failed). */
+        if (bt.ok != prev_bt_ok || st.ok != prev_st_ok ||
+            bt.fault != prev_bt_fault || st.fault != prev_st_fault) {
+            if (!bt.ok || !st.ok) {
+                ESP_LOGW(TAG, "sensor fault brew_ok=%d fault=0x%02X steam_ok=%d fault=0x%02X",
+                         bt.ok, bt.fault, st.ok, st.fault);
+            } else {
+                ESP_LOGI(TAG, "both temperature probes reading OK");
+            }
+            prev_bt_ok = bt.ok;
+            prev_st_ok = st.ok;
+            prev_bt_fault = bt.fault;
+            prev_st_fault = st.fault;
         }
     }
 }

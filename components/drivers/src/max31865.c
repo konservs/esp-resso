@@ -11,9 +11,11 @@
 #define MAX31865_WRITE_FLAG    0x80
 #define MAX31865_FAULT_CLEAR   0x02 /* config D1: clear the latched fault */
 
-/* Config: Vbias on, auto conversion, 3-wire off, 50 Hz filter.
- * TODO: expose 2/3/4-wire and 50/60 Hz selection if needed per machine. */
-#define MAX31865_CONFIG        0xC1
+/* Config: Vbias on (D7), auto conversion (D6), 50 Hz filter (D0). The wiring
+ * mode (D4) is added per device by max31865_add().
+ * TODO: expose 50/60 Hz selection if this ever ships outside 50 Hz mains. */
+#define MAX31865_CONFIG_BASE   0xC1
+#define MAX31865_CFG_3WIRE     0x10 /* config D4: 3-wire lead compensation */
 
 static esp_err_t write_reg(max31865_t *dev, uint8_t reg, uint8_t val)
 {
@@ -43,10 +45,13 @@ static esp_err_t read_regs(max31865_t *dev, uint8_t reg, uint8_t *out, size_t n)
 }
 
 esp_err_t max31865_add(max31865_t *dev, spi_host_device_t host, int cs_gpio,
-                       float rref, float rnominal)
+                       float rref, float rnominal, max31865_wires_t wires)
 {
     dev->rref = rref;
     dev->rnominal = rnominal;
+    /* 2- and 4-wire share D4=0; only 3-wire enables lead compensation. */
+    dev->config = MAX31865_CONFIG_BASE |
+                  ((wires == MAX31865_3WIRE) ? MAX31865_CFG_3WIRE : 0);
 
     spi_device_interface_config_t cfg = { 0 };
     cfg.clock_speed_hz = 1 * 1000 * 1000; /* 1 MHz; MAX31865 max is ~5 MHz */
@@ -58,7 +63,7 @@ esp_err_t max31865_add(max31865_t *dev, spi_host_device_t host, int cs_gpio,
     if (err != ESP_OK) {
         return err;
     }
-    return write_reg(dev, MAX31865_REG_CONFIG, MAX31865_CONFIG);
+    return write_reg(dev, MAX31865_REG_CONFIG, dev->config);
 }
 
 bool max31865_read_celsius(max31865_t *dev, temp_c_t *out_c, uint8_t *out_fault)
@@ -84,7 +89,7 @@ bool max31865_read_celsius(max31865_t *dev, temp_c_t *out_c, uint8_t *out_fault)
             read_regs(dev, MAX31865_REG_FAULT, &f, 1);
             *out_fault = f;
         }
-        write_reg(dev, MAX31865_REG_CONFIG, MAX31865_CONFIG | MAX31865_FAULT_CLEAR);
+        write_reg(dev, MAX31865_REG_CONFIG, dev->config | MAX31865_FAULT_CLEAR);
         return false;
     }
 

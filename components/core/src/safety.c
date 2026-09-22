@@ -49,6 +49,17 @@ safety_trip_t safety_update(safety_t *s, const safety_inputs_t *in, esp_ms_t now
         return s->trip; /* latched */
     }
 
+    /* 0. No measurement yet. The supervisor runs faster and at a higher
+     *    priority than the control loop, so its first ticks land before the
+     *    loop has sampled anything: the inputs are still the zero-initialised
+     *    defaults, and reading them as a faulted probe would latch a bogus
+     *    SENSOR_FAULT on every power-up. Nothing is energised until control
+     *    runs, so waiting costs no safety. */
+    if (!in->sensors_valid) {
+        s->timing_heat = false;
+        return SAFETY_OK;
+    }
+
     /* 1. Sensor integrity. A faulted sensor means we cannot trust the
      *    temperature, so we must cut the heaters. */
     if (!in->brew_sensor_ok || !in->steam_sensor_ok) {

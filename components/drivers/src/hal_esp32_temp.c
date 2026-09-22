@@ -6,8 +6,16 @@
 #include "drivers/max31865.h"
 #include "drivers/pins.h"
 
-/* PT100 with a 430 ohm reference resistor (the common Adafruit value). */
+/* PT100 with a 430 ohm reference resistor (the common Adafruit value). The
+ * MAX31865 is ratiometric, so this value's absolute error lands directly on the
+ * temperature: at ~110 ohm (roughly 26 C) 1% here is about 2.9 C of reading. If
+ * you fit anything other than a precision part, measure it and put the measured
+ * value here — that costs nothing and buys back most of the accuracy. */
 #define RTD_RREF 430.0f
+
+/* Both boilers use 3-wire probes. This must match what is soldered: a 3-wire
+ * probe read in 2-wire mode reports a permanent open-circuit fault. */
+#define RTD_WIRES MAX31865_3WIRE
 
 #define RTD_SPI_HOST SPI2_HOST
 
@@ -26,10 +34,12 @@ espresso_result_t hal_temp_init(void)
     if (spi_bus_initialize(RTD_SPI_HOST, &bus, SPI_DMA_CH_AUTO) != ESP_OK) {
         return ESPRESSO_ERR_STATE;
     }
-    if (max31865_add(&s_brew, RTD_SPI_HOST, PIN_RTD_BREW_CS, RTD_RREF, RTD_PT100_R0) != ESP_OK) {
+    if (max31865_add(&s_brew, RTD_SPI_HOST, PIN_RTD_BREW_CS, RTD_RREF, RTD_PT100_R0,
+                     RTD_WIRES) != ESP_OK) {
         return ESPRESSO_ERR_STATE;
     }
-    if (max31865_add(&s_steam, RTD_SPI_HOST, PIN_RTD_STEAM_CS, RTD_RREF, RTD_PT100_R0) != ESP_OK) {
+    if (max31865_add(&s_steam, RTD_SPI_HOST, PIN_RTD_STEAM_CS, RTD_RREF, RTD_PT100_R0,
+                     RTD_WIRES) != ESP_OK) {
         return ESPRESSO_ERR_STATE;
     }
     return ESPRESSO_OK;

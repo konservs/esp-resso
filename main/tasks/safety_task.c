@@ -31,18 +31,33 @@ void safety_task(void *arg)
     TickType_t last = xTaskGetTickCount();
     temp_c_t prev_brew = 0.0f, prev_steam = 0.0f;
     bool have_prev = false;
+    safety_trip_t prev_trip = SAFETY_OK;
 
     for (;;) {
         vTaskDelayUntil(&last, period);
 
         safety_inputs_t in;
         safety_trip_t trip;
+        const esp_ms_t now = hal_time_ms();
 
         xSemaphoreTake(app->lock, portMAX_DELAY);
+        /* This task runs twice as often as the control loop and at a higher
+         * priority, so at boot it gets here before any temperature has been
+         * sampled. Until the loop publishes its first reading the fields below
+         * are zero-initialised placeholders, not measurements — say so rather
+         * than let the supervisor read ok=false as a faulted probe and latch
+         * SENSOR_FAULT on every power-up. Once readings do flow, one that has
+         * gone stale means the control loop has stalled or died, and its last
+         * temperature is no longer something we can act on: that IS a fault. */
+        const esp_ms_t published = app->temp_update_ms;
+        const bool sampled = (published != 0);
+        const bool stale = sampled && espresso_elapsed_ms(published, now) >= TEMP_STALE_MS;
+
+        in.sensors_valid = sampled;
         in.brew_temp = app->brew_temp.celsius;
         in.steam_temp = app->steam_temp.celsius;
-        in.brew_sensor_ok = app->brew_temp.ok;
-        in.steam_sensor_ok = app->steam_temp.ok;
+        in.brew_sensor_ok = app->brew_temp.ok && !stale;
+        in.steam_sensor_ok = app->steam_temp.ok && !stale;
         in.any_heater_on = (app->brew_duty > 0.0f) || (app->steam_duty > 0.0f);
         /* Progress = temperature climbing, or already within a ready band. */
         in.making_progress =
@@ -52,16 +67,25 @@ void safety_task(void *arg)
             boiler_at_setpoint(&app->brew_boiler, in.brew_temp) ||
             boiler_at_setpoint(&app->steam_boiler, in.steam_temp);
 
-        trip = safety_update(&app->safety, &in, hal_time_ms());
+        trip = safety_update(&app->safety, &in, now);
         prev_brew = in.brew_temp;
         prev_steam = in.steam_temp;
         have_prev = true;
         xSemaphoreGive(app->lock);
 
         if (trip != SAFETY_OK) {
+            /* Keep cutting the heaters every cycle — that must not depend on an
+             * edge — but announce the trip once. The trip is latched, so
+             * re-posting EV_FAULT and re-logging at every tick only floods the
+             * event queue and the console. */
             hal_heater_all_off();
-            app_post_event(EV_FAULT);
-            ESP_LOGE(TAG, "SAFETY TRIP: %s", safety_trip_name(trip));
+            if (prev_trip == SAFETY_OK) {
+                app_post_event(EV_FAULT);
+                ESP_LOGE(TAG, "SAFETY TRIP: %s (brew %.1fC ok=%d, steam %.1fC ok=%d)",
+                         safety_trip_name(trip), in.brew_temp, in.brew_sensor_ok,
+                         in.steam_temp, in.steam_sensor_ok);
+            }
         }
+        prev_trip = trip;
     }
 }

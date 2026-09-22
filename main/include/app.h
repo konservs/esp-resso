@@ -18,6 +18,7 @@
 
 #include "core/boiler.h"
 #include "core/brew.h"
+#include "core/debug_pulse.h"
 #include "core/pump_guard.h"
 #include "core/safety.h"
 #include "core/settings.h"
@@ -49,6 +50,10 @@ typedef enum {
  *  treated as untrusted: that boiler's heaters stay off and its fill valve shut
  *  until a fresh reading arrives. */
 #define LEVEL_STALE_MS    10000
+/** A published temperature older than this means the control loop has stalled
+ *  or died, so its last reading can no longer be trusted. The safety supervisor
+ *  treats that as a sensor fault. Ten control periods. */
+#define TEMP_STALE_MS     1000
 
 /** Shared machine state. Hold @ref app_state_t::lock when touching it. */
 typedef struct {
@@ -59,10 +64,17 @@ typedef struct {
     brew_t     brew;
     pump_guard_t pump_guard;
     safety_t   safety;
+    /** Admin bench override of one actuator (see core/debug_pulse.h). Started
+     *  from the dashboard, expired by the control loop. */
+    debug_pulse_t debug_pulse;
 
     /* Live telemetry published by the control task (for UI / safety / net). */
     hal_temp_reading_t brew_temp;
     hal_temp_reading_t steam_temp;
+    /** When the control loop last published the two readings above. 0 until its
+     *  first sample: the safety supervisor runs sooner, and must not read the
+     *  zero-initialised placeholders as a faulted probe (see ::TEMP_STALE_MS). */
+    esp_ms_t temp_update_ms;
     float    brew_duty;
     float    steam_duty;
     bool     heater_active[LOAD_HEATER_COUNT]; /**< Per-element drive state after
@@ -81,6 +93,8 @@ typedef struct {
     bool     reservoir_present;
     bool     valve_brew_open;  /**< Brew auto-fill solenoid commanded open.   */
     bool     valve_steam_open; /**< Steam auto-fill solenoid commanded open.  */
+    debug_out_t debug_out;     /**< Output the debug pulse is driving, if any. */
+    uint32_t debug_ms;         /**< Milliseconds left on that pulse.           */
 
     /* Lock-free inter-task signals — the one exception to the "hold @ref lock"
      * rule below. Each has a single writer and a single reader and is
@@ -143,7 +157,26 @@ typedef struct {
     bool           reservoir_ok;
     bool           valve_brew_open;  /**< Brew auto-fill solenoid open.  */
     bool           valve_steam_open; /**< Steam auto-fill solenoid open. */
+    debug_out_t    debug_out;        /**< Output a debug pulse is driving. */
+    uint32_t       debug_ms;         /**< Milliseconds left on that pulse. */
 } app_telemetry_t;
+
+/** Why ::app_debug_pulse refused to start a pulse. */
+typedef enum {
+    APP_PULSE_OK = 0,
+    APP_PULSE_BAD_OUTPUT, /**< Not an output a debug pulse may drive.       */
+    APP_PULSE_REFUSED     /**< Safety tripped, or a shot/backflush running. */
+} app_pulse_result_t;
+
+/**
+ * @brief Drive one actuator directly for ::DEBUG_PULSE_MS, for bench testing.
+ *
+ * Admin-only from the dashboard. Takes the lock internally, and only starts a
+ * pulse when ::debug_pulse_permitted agrees; the control loop expires it, so
+ * the output cannot stay on if the caller goes away. Passing
+ * ::DEBUG_OUT_NONE cancels a running pulse.
+ */
+app_pulse_result_t app_debug_pulse(debug_out_t out);
 
 /** Post a machine event from any task/ISR-safe context. */
 void app_post_event(machine_event_t ev);
