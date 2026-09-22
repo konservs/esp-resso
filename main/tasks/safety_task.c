@@ -59,6 +59,11 @@ void safety_task(void *arg)
         in.brew_sensor_ok = app->brew_temp.ok && !stale;
         in.steam_sensor_ok = app->steam_temp.ok && !stale;
         in.any_heater_on = (app->brew_duty > 0.0f) || (app->steam_duty > 0.0f);
+        /* Fill runaway: the valve commands the control loop published this
+         * cycle. Either one open means the machine is asking for water; the
+         * command drops as soon as that boiler's probe reads covered, so an
+         * unbroken run is a fill that is getting nowhere. */
+        in.any_fill_on = app->valve_brew_open || app->valve_steam_open;
         /* Progress = temperature climbing, or already within a ready band. */
         in.making_progress =
             !have_prev ||

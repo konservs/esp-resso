@@ -54,7 +54,8 @@ void settings_load_defaults(settings_t *s)
 
     const safety_config_t safety = {
         .max_temp = DEFAULT_MAX_TEMP,
-        .heat_timeout_ms = 120000 /* 2 min of fruitless heating -> trip */
+        .heat_timeout_ms = 120000, /* 2 min of fruitless heating -> trip */
+        .fill_timeout_ms = 60000   /* 1 min of fruitless filling -> trip */
     };
     s->safety = safety;
 }

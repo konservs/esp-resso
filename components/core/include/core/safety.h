@@ -8,7 +8,9 @@
  *   - over-temperature on either boiler,
  *   - a temperature-sensor fault (open/short reported by the front-end),
  *   - a heater that stays on too long without making progress (dry boiler,
- *     failed element, or a welded SSR contact).
+ *     failed element, or a welded SSR contact),
+ *   - a boiler that keeps calling for water without ever reading full (a leak,
+ *     a dry or stuck reservoir float, a failed pump or valve, or a dead probe).
  *
  * Once tripped it stays tripped until ::safety_clear() is called by an
  * explicit operator action.
@@ -26,12 +28,16 @@ typedef enum {
     SAFETY_OK = 0,
     SAFETY_TRIP_OVERTEMP,      /**< Boiler exceeded the absolute maximum.   */
     SAFETY_TRIP_SENSOR_FAULT,  /**< Temperature sensor open/short.          */
-    SAFETY_TRIP_HEAT_TIMEOUT   /**< Heating too long without progress.      */
+    SAFETY_TRIP_HEAT_TIMEOUT,  /**< Heating too long without progress.      */
+    SAFETY_TRIP_FILL_TIMEOUT   /**< Filling too long without reaching full. */
 } safety_trip_t;
 
 typedef struct {
     temp_c_t max_temp;        /**< Absolute cutoff for either boiler (deg C). */
     uint32_t heat_timeout_ms; /**< Max continuous heating without progress.   */
+    uint32_t fill_timeout_ms; /**< Max continuous filling before a trip;
+                               *   0 disables the check (e.g. a plumbed
+                               *   machine, or bench work).                  */
 } safety_config_t;
 
 typedef struct {
@@ -39,6 +45,8 @@ typedef struct {
     safety_trip_t   trip;
     esp_ms_t        heat_since;  /**< When continuous heating began.          */
     bool            timing_heat; /**< Whether the heat timer is running.      */
+    esp_ms_t        fill_since;  /**< When continuous filling began.          */
+    bool            timing_fill; /**< Whether the fill timer is running.      */
 } safety_t;
 
 /** Per-step inputs sampled by the control/safety task. */
@@ -55,6 +63,12 @@ typedef struct {
     bool     steam_sensor_ok;
     bool     any_heater_on;    /**< True if either SSR is being driven.        */
     bool     making_progress;  /**< Temperature rising or already at setpoint. */
+    bool     any_fill_on;      /**< True while either fill valve is commanded
+                                *   open. There is no partial-progress signal
+                                *   to pair this with — a level probe is
+                                *   binary, and the fill command drops the
+                                *   moment it reads covered — so continuous
+                                *   fill time IS the failure measure.         */
 } safety_inputs_t;
 
 /** Initialise the supervisor in the OK state. */

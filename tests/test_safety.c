@@ -7,7 +7,9 @@ void tearDown(void) {}
 
 static safety_t make_safety(void)
 {
-    safety_config_t cfg = { .max_temp = 160.0f, .heat_timeout_ms = 1000 };
+    safety_config_t cfg = { .max_temp = 160.0f,
+                            .heat_timeout_ms = 1000,
+                            .fill_timeout_ms = 2000 };
     safety_t s;
     safety_init(&s, &cfg);
     return s;
@@ -22,7 +24,8 @@ static safety_inputs_t healthy_inputs(void)
         .brew_sensor_ok = true,
         .steam_sensor_ok = true,
         .any_heater_on = false,
-        .making_progress = true
+        .making_progress = true,
+        .any_fill_on = false
     };
     return in;
 }
@@ -119,6 +122,76 @@ static void test_no_reading_yet_holds_heat_timer(void)
     TEST_ASSERT_EQUAL_INT(SAFETY_TRIP_HEAT_TIMEOUT, safety_update(&s, &real, 6000));
 }
 
+/* A boiler that keeps calling for water and never reads full: a leak, a stuck
+ * float, a failed pump/valve, or a dead probe. Left alone it pumps at that
+ * boiler forever. */
+static void test_fill_timeout_trips(void)
+{
+    safety_t s = make_safety();
+    safety_inputs_t in = healthy_inputs();
+    in.any_fill_on = true;
+
+    TEST_ASSERT_EQUAL_INT(SAFETY_OK, safety_update(&s, &in, 0));    /* timer starts */
+    TEST_ASSERT_EQUAL_INT(SAFETY_OK, safety_update(&s, &in, 1900)); /* still within */
+    TEST_ASSERT_EQUAL_INT(SAFETY_TRIP_FILL_TIMEOUT, safety_update(&s, &in, 2000));
+
+    /* Latched: it stays tripped once the fill stops. */
+    in.any_fill_on = false;
+    TEST_ASSERT_EQUAL_INT(SAFETY_TRIP_FILL_TIMEOUT, safety_update(&s, &in, 2100));
+}
+
+/* A fill that completes — the probe reads covered, so the command drops — must
+ * not leave the clock running for the next one. */
+static void test_completed_fill_resets_the_timer(void)
+{
+    safety_t s = make_safety();
+    safety_inputs_t in = healthy_inputs();
+    in.any_fill_on = true;
+    safety_update(&s, &in, 0);
+    safety_update(&s, &in, 1500);
+
+    in.any_fill_on = false;            /* boiler reached full */
+    safety_update(&s, &in, 1600);
+
+    in.any_fill_on = true;             /* a later top-up starts from zero */
+    TEST_ASSERT_EQUAL_INT(SAFETY_OK, safety_update(&s, &in, 1700));
+    TEST_ASSERT_EQUAL_INT(SAFETY_OK, safety_update(&s, &in, 3000));
+    TEST_ASSERT_EQUAL_INT(SAFETY_TRIP_FILL_TIMEOUT, safety_update(&s, &in, 3700));
+}
+
+/* fill_timeout_ms = 0 disables the check (plumbed machine, or bench work). */
+static void test_fill_timeout_disabled_when_zero(void)
+{
+    safety_config_t cfg = { .max_temp = 160.0f,
+                            .heat_timeout_ms = 1000,
+                            .fill_timeout_ms = 0 };
+    safety_t s;
+    safety_init(&s, &cfg);
+    safety_inputs_t in = healthy_inputs();
+    in.any_fill_on = true;
+    TEST_ASSERT_EQUAL_INT(SAFETY_OK, safety_update(&s, &in, 0));
+    TEST_ASSERT_EQUAL_INT(SAFETY_OK, safety_update(&s, &in, 600000)); /* 10 min */
+    TEST_ASSERT_FALSE(safety_tripped(&s));
+}
+
+/* A valve left open across the boot window must not accumulate fill time
+ * before the control loop has published anything — the same rule the heat
+ * timer follows. */
+static void test_no_reading_yet_holds_fill_timer(void)
+{
+    safety_t s = make_safety();
+    safety_inputs_t in = { 0 };
+    in.any_fill_on = true;
+    safety_update(&s, &in, 0);
+    TEST_ASSERT_EQUAL_INT(SAFETY_OK, safety_update(&s, &in, 5000));
+
+    safety_inputs_t real = healthy_inputs();
+    real.any_fill_on = true;
+    TEST_ASSERT_EQUAL_INT(SAFETY_OK, safety_update(&s, &real, 5000));
+    TEST_ASSERT_EQUAL_INT(SAFETY_OK, safety_update(&s, &real, 6900));
+    TEST_ASSERT_EQUAL_INT(SAFETY_TRIP_FILL_TIMEOUT, safety_update(&s, &real, 7000));
+}
+
 static void test_clear_resets(void)
 {
     safety_t s = make_safety();
@@ -140,6 +213,10 @@ int main(void)
     RUN_TEST(test_progress_resets_heat_timer);
     RUN_TEST(test_no_reading_yet_does_not_trip);
     RUN_TEST(test_no_reading_yet_holds_heat_timer);
+    RUN_TEST(test_fill_timeout_trips);
+    RUN_TEST(test_completed_fill_resets_the_timer);
+    RUN_TEST(test_fill_timeout_disabled_when_zero);
+    RUN_TEST(test_no_reading_yet_holds_fill_timer);
     RUN_TEST(test_clear_resets);
     return UNITY_END();
 }

@@ -20,6 +20,20 @@
 
 static const char *TAG = "control";
 
+/* Pump duty while auto-filling a boiler. The vibratory pump is on/off at this
+ * HAL (any positive duty energises it); named so it has somewhere to go if
+ * pulse-skip modulation lands. */
+#define FILL_PUMP_DUTY 1.0f
+
+/* True while the brew sequencer owns the pump. Nothing else may command it in
+ * these states — an auto-fill topping up a boiler mid-shot would steal pressure
+ * from the extraction. The bench override applies the same rule for the same
+ * reason (see core/debug_pulse.h). */
+static bool pump_owned_by_brew(machine_state_t s)
+{
+    return s == MACHINE_BREWING || s == MACHINE_BACKFLUSH;
+}
+
 static void drain_events(app_state_t *app)
 {
     machine_event_t ev;
@@ -189,9 +203,32 @@ void control_task(void *arg)
         flow_rate += FLOW_RATE_ALPHA * (dv / dt_s - flow_rate);
         app->flow_rate_ml_s = flow_rate;
 
-        /* Advance the pump's duty-cycle model with this cycle's command. It
-         * only fills while brewing (the sole state that drives the pump) and
-         * drains in every other state, so idle time counts as rest. */
+        /* Auto-fill decision (reused to drive the valves below).
+         *
+         * The reservoir is unpressurised, so the pump is what pushes water
+         * through a fill solenoid: the valve and the pump are commanded
+         * together, and an open valve on a stopped pump moves nothing. A
+         * faulted probe still holds the valve shut — we can't trust the
+         * reading, and filling on a bad "dry" reading risks overfilling.
+         *
+         * A fill is therefore pump work like any other, and is gated on the
+         * same duty-cycle guard that gates a shot: none starts while the pump
+         * is resting, and one already running stops the moment the guard trips.
+         * It is decided here, above pump_guard_update(), so that the pump time
+         * a fill spends is charged to the budget it is spending. */
+        const bool can_fill = (state != MACHINE_FAULT) &&
+                              !pump_owned_by_brew(state) && reservoir_ok &&
+                              pump_guard_can_brew(&app->pump_guard);
+        bool brew_filling = can_fill && brew_dry;
+        bool steam_filling = can_fill && steam_dry;
+        if (brew_filling || steam_filling) {
+            pump_on = true;
+            pump_duty = FILL_PUMP_DUTY;
+        }
+
+        /* Advance the pump's duty-cycle model with this cycle's command: a shot
+         * or a fill fills the bucket, every other state drains it, so idle time
+         * counts as rest. */
         pump_guard_update(&app->pump_guard, pump_on, now);
         app->pump_cooling = pump_guard_cooling(&app->pump_guard);
         app->pump_cooldown_ms = pump_guard_cooldown_ms(&app->pump_guard);
@@ -206,12 +243,6 @@ void control_task(void *arg)
         }
         app->both_ready = both_ready;
 
-        /* Auto-fill decision (reused to drive the valves below) + diagnostics.
-         * A faulted probe holds the fill valve shut: we can't trust the reading,
-         * and opening the valve on a bad "dry" reading risks overfilling. */
-        const bool can_fill = (state != MACHINE_FAULT) && reservoir_ok;
-        bool brew_filling = can_fill && brew_dry;
-        bool steam_filling = can_fill && steam_dry;
         /* The level view is the probe reading itself, so it stays truthful
          * whatever the fill logic above decided — and a bench pulse below
          * cannot make an empty boiler read as anything but empty. Whether a
@@ -264,8 +295,8 @@ void control_task(void *arg)
             hal_pump_off();
         }
 
-        /* Boiler auto-fill: top up a boiler whose probe is uncovered, but only
-         * when the reservoir has water and the machine is not faulted. */
+        /* Boiler auto-fill: the pump above is already running for these (or for
+         * a shot); the solenoid picks which boiler it feeds. */
         hal_valve_set(HAL_VALVE_FILL_BREW, brew_filling);
         hal_valve_set(HAL_VALVE_FILL_STEAM, steam_filling);
 

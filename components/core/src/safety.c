@@ -6,6 +6,8 @@ void safety_init(safety_t *s, const safety_config_t *cfg)
     s->trip = SAFETY_OK;
     s->heat_since = 0;
     s->timing_heat = false;
+    s->fill_since = 0;
+    s->timing_fill = false;
 }
 
 bool safety_tripped(const safety_t *s)
@@ -22,6 +24,7 @@ void safety_clear(safety_t *s)
 {
     s->trip = SAFETY_OK;
     s->timing_heat = false;
+    s->timing_fill = false;
 }
 
 const char *safety_trip_name(safety_trip_t t)
@@ -31,6 +34,7 @@ const char *safety_trip_name(safety_trip_t t)
     case SAFETY_TRIP_OVERTEMP:     return "OVERTEMP";
     case SAFETY_TRIP_SENSOR_FAULT: return "SENSOR_FAULT";
     case SAFETY_TRIP_HEAT_TIMEOUT: return "HEAT_TIMEOUT";
+    case SAFETY_TRIP_FILL_TIMEOUT: return "FILL_TIMEOUT";
     default:                       return "?";
     }
 }
@@ -57,6 +61,7 @@ safety_trip_t safety_update(safety_t *s, const safety_inputs_t *in, esp_ms_t now
      *    runs, so waiting costs no safety. */
     if (!in->sensors_valid) {
         s->timing_heat = false;
+        s->timing_fill = false;
         return SAFETY_OK;
     }
 
@@ -87,6 +92,29 @@ safety_trip_t safety_update(safety_t *s, const safety_inputs_t *in, esp_ms_t now
     } else {
         /* Heater off or temperature progressing: reset the timer. */
         s->timing_heat = false;
+    }
+
+    /* 4. Fill runaway: a boiler asking for water for longer than
+     *    fill_timeout_ms without ever reading full. The fill command drops as
+     *    soon as the probe reads covered, so an unbroken run this long means
+     *    the water is not arriving — a leak, an empty or stuck reservoir float,
+     *    a failed pump or valve, or a probe that never reads wet. Left running,
+     *    that pumps water at a boiler indefinitely.
+     *
+     *    The timer measures *continuous* filling and resets whenever the fill
+     *    stops, matching the heat timer above. A fill interrupted by the pump's
+     *    duty-cycle guard therefore restarts the clock rather than accumulating
+     *    across the rest. */
+    if (s->cfg.fill_timeout_ms > 0 && in->any_fill_on) {
+        if (!s->timing_fill) {
+            s->timing_fill = true;
+            s->fill_since = now;
+        } else if (espresso_elapsed_ms(s->fill_since, now) >= s->cfg.fill_timeout_ms) {
+            latch(s, SAFETY_TRIP_FILL_TIMEOUT);
+            return s->trip;
+        }
+    } else {
+        s->timing_fill = false;
     }
 
     return SAFETY_OK;

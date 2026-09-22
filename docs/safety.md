@@ -31,13 +31,21 @@ standing between a fault and a hazard.
    - **Heat timeout / runaway** — a heater driven continuously without the
      temperature making progress, which indicates a dry boiler, a dead element,
      or a *welded SSR contact*.
+   - **Fill timeout** — a boiler calling for water for longer than
+     `fill_timeout_ms` (default **60 s**) without ever reading full. The fill
+     command drops the instant the probe reads covered, so an unbroken run that
+     long means the water is not arriving: a leak, an empty or stuck reservoir
+     float, a failed pump or valve, or a probe that never reads wet. Left alone
+     the machine would pump at that boiler indefinitely. Set it to `0` to
+     disable the check (a plumbed machine, or bench work).
 
 3. **Control-loop hygiene:** PID output is clamped to [0, 1]; a **per-boiler
    dry-fire interlock** keeps that boiler's heaters fully off whenever its water
    level is not confirmed present (low, filling, or a faulted level reading),
    until auto-fill covers the probe again — the proactive counterpart to the
-   heat-timeout backstop; auto-fill itself is gated on the reservoir having water
-   and is disabled during a fault; a **mains load guard** caps how many heater
+   heat-timeout backstop; auto-fill itself is gated on the reservoir having water,
+   on the pump's duty-cycle guard (a fill runs the pump, so it is charged to the
+   same budget), and is disabled during a fault; a **mains load guard** caps how many heater
    elements run at once so the heaters + pump can't overload the supply circuit
    (see [control.md](control.md)); and a **pump duty-cycle guard** stops a
    vibratory pump being run past its rating.

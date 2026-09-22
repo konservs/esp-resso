@@ -61,12 +61,18 @@ void debug_pulse_init(debug_pulse_t *p);
  * Refused only while a shot or a backflush is running, where the override would
  * fight the brew sequencer for the pump.
  *
- * A latched safety trip deliberately does *not* block a pulse. Every trip this
- * supervisor raises is about temperature — an over-temperature boiler, a faulted
- * probe, a heater making no progress — and none of the outputs here are heaters.
- * Blocking on it only made the feature unavailable during exactly the bench
- * session it exists for, since a machine with unfinished probe wiring trips on
- * every boot.
+ * A latched safety trip deliberately does *not* block a pulse. Blocking on it
+ * only made the feature unavailable during exactly the bench session it exists
+ * for, since a machine with unfinished probe wiring trips on every boot.
+ *
+ * Most trips are about temperature — an over-temperature boiler, a faulted
+ * probe, a heater making no progress — and none of the outputs here are
+ * heaters. ::SAFETY_TRIP_FILL_TIMEOUT is the exception: it is raised *about*
+ * these very outputs, and it means water is not reaching a boiler. A pulse is
+ * still allowed on it, deliberately — a bounded, operator-initiated run of the
+ * pump or a fill valve is how you find out which of them is at fault — but note
+ * that if the cause is a leak, a pulse adds a little more water. The pulse
+ * expiring here rather than at the caller is what keeps that bounded.
  *
  * That reasoning holds only as long as this module drives no heating element.
  * **If a heater output is ever added to ::debug_out_t, the safety-trip gate has

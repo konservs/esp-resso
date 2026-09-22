@@ -168,10 +168,57 @@ the commanded duty — the conservative, pump-protecting choice.
 
 ## Auto-fill
 
-`control_task` debounces each boiler's level probe and opens the fill valve when
-the probe is uncovered, stopping when covered — gated on the reservoir having
-water and the machine not being faulted (dry-fire protection). The generic
-hysteresis helper is in [`core/filter.c`](../components/core/src/filter.c).
+`control_task` debounces each boiler's level probe and fills a boiler whose probe
+is uncovered, stopping when covered. The generic hysteresis helper is in
+[`core/filter.c`](../components/core/src/filter.c).
+
+**A fill runs the pump, not just the valve.** The reservoir is unpressurised, so
+the solenoid only selects *which* boiler gets fed — the pump is what actually
+moves the water. The two are commanded together; an open fill valve with the
+pump stopped does nothing at all.
+
+That makes a fill pump work like any other, so it is charged to the pump's
+duty-cycle budget and gated on the same guard that gates a shot:
+
+- no fill starts while the pump is resting (a boiler may therefore wait up to one
+  cooldown before topping up — the dry-fire interlock keeps its heaters off
+  meanwhile, so nothing unsafe follows from the delay), and
+- a fill already running stops the moment the guard trips.
+
+The decision is made *above* `pump_guard_update()` in the loop on purpose, so the
+pump time a fill spends is charged to the budget it is spending. Moving it below
+that call would let fills run outside the model.
+
+A fill is also held off while the brew sequencer owns the pump (`BREWING`,
+`BACKFLUSH`): topping up a boiler mid-shot would steal pressure from the
+extraction. The bench override in [`core/debug_pulse.h`](../components/core/include/core/debug_pulse.h)
+refuses in those states for the same reason — note it still drives the fill
+solenoids *without* the pump, since it exists to confirm that individual relays
+click, one output at a time.
+
+Fills are gated, as before, on the reservoir having water and the machine not
+being faulted.
+
+**Fill timeout.** A boiler that calls for water for longer than
+`settings.safety.fill_timeout_ms` (default **60 s**) without ever reading full
+latches a `FILL_TIMEOUT` safety trip, which forces `MACHINE_FAULT` — closing both
+fill valves, stopping the pump and cutting the heaters — until an operator
+clears it. An unbroken fill that long means the water is not arriving (a leak, an
+empty or stuck reservoir float, a failed pump or valve, a probe that never reads
+wet), and without the trip the machine would pump at that boiler indefinitely.
+It lives in the safety supervisor next to the heat timeout, which it mirrors:
+see [safety.md](safety.md).
+
+Two properties worth knowing:
+
+- The timer measures **continuous** filling and resets whenever the fill stops —
+  including when the pump's duty-cycle guard interrupts it. A fill repeatedly
+  cut short by the cooling lock-out therefore restarts the clock each time
+  rather than accumulating across the rests.
+- A normal top-up never approaches it: the fill command drops the moment the
+  probe reads covered.
+
+Set `fill_timeout_ms` to `0` to disable the check.
 
 **Dry-fire interlock.** The same debounced level also gates the *heaters*: a
 boiler is only heated while its probe reads covered. If it reads uncovered
