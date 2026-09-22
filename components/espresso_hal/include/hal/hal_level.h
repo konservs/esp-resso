@@ -16,9 +16,19 @@ espresso_result_t hal_level_init(void);
 
 /** Result of a probe read. */
 typedef enum {
-    HAL_LEVEL_UNKNOWN = 0, /**< No trusted reading yet: the boot/seed value and
-                            *   what callers fall back to when a published state
-                            *   goes stale. hal_level_read() never returns it.  */
+    HAL_LEVEL_UNKNOWN = 0, /**< No trusted reading: a probe that has not settled
+                            *   yet, or a published state gone stale.
+                            *   hal_level_read() never returns it.
+                            *
+                            *   It exists as a state in its own right because
+                            *   there is no default that is safe for everyone:
+                            *   assuming "full" keeps the fill valve shut (good)
+                            *   but lets the heaters run in a boiler that may be
+                            *   empty (bad), and assuming "dry" inverts both. So
+                            *   callers get the absence of a measurement and
+                            *   each resolves it in its own safe direction —
+                            *   filling needs an affirmative DRY, heating an
+                            *   affirmative WET. See docs/safety.md.           */
     HAL_LEVEL_DRY,     /**< Probe uncovered (no water at the rod).            */
     HAL_LEVEL_WET,     /**< Probe covered (water present).                    */
     HAL_LEVEL_FAULT    /**< Implausible reading — the POS and NEG sense lines

@@ -33,12 +33,72 @@
 #include "hal/hal_time.h"
 
 #if !LEVEL_DEBUG_SWEEP
-/* Collapse the two independent debouncers into one published state. They are
- * mutually exclusive (a raw read is exactly one of dry/wet/fault, so a stable
- * "wet" and a stable "fault" can never hold at once), so precedence here is only
- * a formality; fault wins to fail safe. */
-static hal_level_state_t level_classify(bool full, bool fault)
+
+/** Consistent samples required, both to debounce and to call a probe settled. */
+#define LEVEL_DEBOUNCE_N 3
+
+/* One probe's filtering state. The two debouncers are mutually exclusive (a raw
+ * read is exactly one of dry/wet/fault, so a stable "wet" and a stable "fault"
+ * can never hold at once), so precedence between them is only a formality;
+ * fault wins to fail safe. */
+typedef struct {
+    debounce_t        full;     /**< Stable "probe covered".                */
+    debounce_t        fault;    /**< Stable "sense path faulted".           */
+    hal_level_state_t last_raw; /**< Previous raw read, for the settle run. */
+    uint8_t           run;      /**< Identical raw reads in a row so far.   */
+    bool              settled;  /**< Latches once the first run completes.  */
+} probe_filter_t;
+
+static void probe_filter_init(probe_filter_t *p)
 {
+    /* The "full" debouncer starts true so that an unread probe can never read
+     * as dry and open a fill valve blind; the "fault" one starts false.
+     *
+     * That seed is only safe for the *valve*, though. Published as if it were a
+     * reading it would also satisfy the heaters' dry-fire interlock, which is
+     * the opposite of safe — so it is not published. Until @c settled these are
+     * seeds, not a measurement, and the probe reads HAL_LEVEL_UNKNOWN, which
+     * both consumers fail closed on. See docs/safety.md. */
+    debounce_init(&p->full, LEVEL_DEBOUNCE_N, true);
+    debounce_init(&p->fault, LEVEL_DEBOUNCE_N, false);
+    p->last_raw = HAL_LEVEL_UNKNOWN;
+    p->run = 0;
+    p->settled = false;
+}
+
+/* Feed one raw read; returns the state to publish.
+ *
+ * Until the probe has produced LEVEL_DEBOUNCE_N identical reads in a row this
+ * returns ::HAL_LEVEL_UNKNOWN — "no reading yet" — rather than the debouncers'
+ * seeded values, which is what used to make an empty boiler announce itself as
+ * full for the first few hundred ms after boot. The gate latches open on that
+ * first run and never closes again, so a genuine wet->dry transition later on
+ * debounces normally instead of flickering back through "no reading".
+ *
+ * A probe so noisy that it never manages three identical reads in a row never
+ * settles at all, and stays at "no reading" indefinitely. That is the intended
+ * answer for a probe that cannot be believed: it is visible on the screen, and
+ * the control loop holds that boiler untrusted meanwhile — heaters off, fill
+ * shut. */
+static hal_level_state_t probe_update(probe_filter_t *p, hal_level_state_t raw)
+{
+    const bool full = debounce_update(&p->full, raw == HAL_LEVEL_WET);
+    const bool fault = debounce_update(&p->fault, raw == HAL_LEVEL_FAULT);
+
+    if (!p->settled) {
+        if (raw == p->last_raw) {
+            if (++p->run >= LEVEL_DEBOUNCE_N) {
+                p->settled = true;
+            }
+        } else {
+            p->last_raw = raw;
+            p->run = 1;
+        }
+        if (!p->settled) {
+            return HAL_LEVEL_UNKNOWN;
+        }
+    }
+
     if (fault) {
         return HAL_LEVEL_FAULT;
     }
@@ -53,18 +113,16 @@ void level_task(void *arg)
 
 #if LEVEL_DEBUG_SWEEP
     /* Bench mode: parade the drive states slowly for a voltmeter instead of
-     * sensing. Never returns; the probe atomics keep their seeded "full" value
-     * so the control loop keeps the fill valves shut. */
+     * sensing. Never returns; the probe atomics keep the ::HAL_LEVEL_UNKNOWN
+     * they were seeded with, so the control loop treats both boilers as
+     * untrusted and keeps the heaters off and the fill valves shut. */
     hal_level_debug_sweep();
 #else
-    /* Debounce the probes so the fill valves do not chatter. The "full"
-     * debouncers start true (assume full at boot so we never fill blind); the
-     * "fault" ones start false. */
-    debounce_t db_brew, db_steam, db_brew_fault, db_steam_fault;
-    debounce_init(&db_brew, 3, true);
-    debounce_init(&db_steam, 3, true);
-    debounce_init(&db_brew_fault, 3, false);
-    debounce_init(&db_steam_fault, 3, false);
+    /* Debounce the probes so the fill valves do not chatter, and hold both
+     * probes at "no reading yet" until they have actually settled. */
+    probe_filter_t brew, steam;
+    probe_filter_init(&brew);
+    probe_filter_init(&steam);
 
     TickType_t last = xTaskGetTickCount();
     for (;;) {
@@ -73,13 +131,8 @@ void level_task(void *arg)
         const hal_level_state_t brew_raw = hal_level_read(HAL_LEVEL_BREW);
         const hal_level_state_t steam_raw = hal_level_read(HAL_LEVEL_STEAM);
 
-        const bool brew_full = debounce_update(&db_brew, brew_raw == HAL_LEVEL_WET);
-        const bool brew_fault = debounce_update(&db_brew_fault, brew_raw == HAL_LEVEL_FAULT);
-        const bool steam_full = debounce_update(&db_steam, steam_raw == HAL_LEVEL_WET);
-        const bool steam_fault = debounce_update(&db_steam_fault, steam_raw == HAL_LEVEL_FAULT);
-
-        atomic_store(&app->brew_probe_state, level_classify(brew_full, brew_fault));
-        atomic_store(&app->steam_probe_state, level_classify(steam_full, steam_fault));
+        atomic_store(&app->brew_probe_state, probe_update(&brew, brew_raw));
+        atomic_store(&app->steam_probe_state, probe_update(&steam, steam_raw));
         /* Stamp the publish time last: with seq-cst atomics, a reader that sees a
          * fresh timestamp is guaranteed to see the states from this iteration. */
         atomic_store(&app->level_update_ms, hal_time_ms());

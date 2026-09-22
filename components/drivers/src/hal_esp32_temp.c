@@ -1,5 +1,31 @@
 #include "hal/hal_temp.h"
 
+#if TEMP_SIM
+
+#include "esp_log.h"
+
+/* Bench mode: no SPI, no MAX31865, no probes — just a fixed reading per boiler.
+ * See the TEMP_SIM block in hal/hal_temp.h for what else this turns off. */
+espresso_result_t hal_temp_init(void)
+{
+    ESP_LOGW("temp", "TEMP_SIM: RTDs NOT read — brew %.1fC / steam %.1fC simulated, "
+                     "heaters disabled",
+             (double)TEMP_SIM_BREW_C, (double)TEMP_SIM_STEAM_C);
+    return ESPRESSO_OK;
+}
+
+hal_temp_reading_t hal_temp_read(hal_boiler_id_t boiler)
+{
+    const hal_temp_reading_t r = {
+        .celsius = (boiler == HAL_BOILER_STEAM) ? TEMP_SIM_STEAM_C : TEMP_SIM_BREW_C,
+        .ok = true,
+        .fault = 0,
+    };
+    return r;
+}
+
+#else /* !TEMP_SIM — the real front-ends */
+
 #include "driver/spi_master.h"
 
 #include "core/rtd.h"
@@ -52,3 +78,5 @@ hal_temp_reading_t hal_temp_read(hal_boiler_id_t boiler)
     r.ok = max31865_read_celsius(dev, &r.celsius, &r.fault);
     return r;
 }
+
+#endif /* TEMP_SIM */

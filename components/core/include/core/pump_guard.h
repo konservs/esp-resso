@@ -21,12 +21,12 @@
  * The guard trips into a cooling lock-out when the bucket fills, and stays
  * locked until it has fully drained (a full rest). It also **starts locked** at
  * init: the firmware cannot know how hard the pump was run before this power-up,
- * so it assumes a full bucket and asks the user to wait for a cooldown before
- * even the first shot. In practice idle time (including the boilers' warm-up)
- * drains it, so a cold start rarely waits, while a warm restart straight after
- * heavy use correctly holds off. The accumulation is a deliberate
- * simplification: any pump-on time counts as full load regardless of the
- * commanded duty, which is the conservative (pump-protecting) choice.
+ * so it assumes some prior load and asks the user to wait before even the first
+ * shot — ::PUMP_STARTUP_REST_MS of it. In practice idle time (including the
+ * boilers' warm-up) drains it, so a cold start rarely waits at all, while a warm
+ * restart straight after heavy use still holds off. The accumulation is a
+ * deliberate simplification: any pump-on time counts as full load regardless of
+ * the commanded duty, which is the conservative (pump-protecting) choice.
  *
  * Like the rest of @c core, this does no I/O and takes @c now as a parameter,
  * so it is fully host-testable.
@@ -39,6 +39,27 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/**
+ * @brief Rest demanded at power-up, before the first shot.
+ *
+ * Not a property of the pump — the datasheet ratio is @c on_max_ms / @c
+ * off_min_ms and is untouched by this. It is a guess at how much thermal load
+ * the pump might be carrying from before the reset, and the only guess
+ * available: the bucket does not survive a power cycle.
+ *
+ * A *full* rest (the whole @c off_min_ms) is the worst case, and assuming it on
+ * every boot is stricter than the situation warrants — the pump was most likely
+ * idle, and the one case it protects against, a reset immediately after heavy
+ * use, is rare next to the ordinary cold start it delays. This is a fraction of
+ * that, enough to cover a quick reset mid-session while staying out of the way
+ * on a normal power-up.
+ *
+ * The seed is scaled to whatever rating is configured, so this stays a rest
+ * *time* regardless of @c on_max_ms / @c off_min_ms, and is capped at a full
+ * bucket if it ever exceeds @c off_min_ms.
+ */
+#define PUMP_STARTUP_REST_MS 15000u
 
 /** Pump duty-cycle rating. Set @c on_max_ms to 0 to disable the guard. */
 typedef struct {
@@ -54,8 +75,8 @@ typedef struct {
     bool     started;  /**< False until the first update (seeds last_ms).     */
 } pump_guard_t;
 
-/** Initialise the guard from a rating. Starts locked (cooling) when enabled,
- *  so the first shot waits for one full rest; see the file comment. */
+/** Initialise the guard from a rating. Starts locked (cooling) when enabled, so
+ *  the first shot waits ::PUMP_STARTUP_REST_MS; see the file comment. */
 void pump_guard_init(pump_guard_t *g, const pump_guard_config_t *cfg);
 
 /**

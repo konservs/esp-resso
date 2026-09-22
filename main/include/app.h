@@ -26,13 +26,25 @@
 #include "hal/hal_level.h"
 #include "hal/hal_temp.h"
 
-/** Water-level status for a boiler, for the diagnostics view. */
+/**
+ * @brief What a boiler's level probe reports — and nothing else.
+ *
+ * Deliberately free of every other consideration: the reservoir, the machine
+ * state, whether a fill is running. Those are separate facts with their own
+ * fields (::app_telemetry_t::reservoir_ok, ::app_telemetry_t::valve_brew_open),
+ * and folding them in here is what once made an *empty reservoir* display as a
+ * *failed level sensor* — two unrelated problems wearing the same red label.
+ *
+ * Nothing that acts on water level reads this. The dry-fire interlock and the
+ * auto-fill decision work from the probe states (::app_state_t::brew_probe_state)
+ * directly, so this stays a report and never becomes a control input.
+ */
 typedef enum {
-    LVL_FULL = 0,  /**< Probe covered.                               */
-    LVL_FILLING,   /**< Uncovered and the fill valve is open.        */
-    LVL_LOW,       /**< Uncovered, fill held off (e.g. machine fault). */
-    LVL_ERROR,     /**< Uncovered but the reservoir is empty.        */
-    LVL_UNKNOWN    /**< No trusted reading (boot, or level task stale). */
+    LVL_INIT = 0,  /**< No settled reading yet — the first moments after boot. */
+    LVL_FULL,      /**< Probe covered.                                        */
+    LVL_EMPTY,     /**< Probe uncovered.                                      */
+    LVL_ERROR,     /**< Sense path faulted: POS and NEG both conducting.      */
+    LVL_STALE      /**< The level task has stopped publishing readings.       */
 } level_status_t;
 
 /** Control-loop period. Boiler PIDs and the brew controller run at this rate. */

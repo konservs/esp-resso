@@ -18,13 +18,22 @@ void pump_guard_init(pump_guard_t *g, const pump_guard_config_t *cfg)
     g->last_ms = 0;
     g->started = false;
     /* Start locked when enabled: we cannot know how hard the pump was worked
-     * before this power-up, so assume a full bucket and require a full rest
-     * (off_min_ms) before the first shot. Idle time — including the boilers'
-     * warm-up — drains it, so a cold start rarely actually waits, while a warm
-     * restart right after heavy use correctly holds off. */
+     * before this power-up, so assume some prior load and require
+     * PUMP_STARTUP_REST_MS of rest before the first shot. Idle time — including
+     * the boilers' warm-up — drains it, so a cold start rarely actually waits,
+     * while a warm restart right after heavy use still holds off.
+     *
+     * Seed the bucket with the load that drains in exactly that time at the
+     * configured rating, so the startup rest stays the same wall-clock wait
+     * whatever the rating is. Capped at a full bucket, which is all the model
+     * can represent (and all the pump can be carrying). */
     if (cfg_enabled(cfg)) {
-        g->heat_ms = cfg->on_max_ms;
-        g->cooling = true;
+        const uint64_t seed =
+            (uint64_t)PUMP_STARTUP_REST_MS * cfg->on_max_ms / cfg->off_min_ms;
+        g->heat_ms = (seed < cfg->on_max_ms) ? (uint32_t)seed : cfg->on_max_ms;
+        /* A seed that rounds away to nothing means no startup rest at all —
+         * don't latch cooling on an already-empty bucket. */
+        g->cooling = (g->heat_ms > 0);
     } else {
         g->heat_ms = 0;
         g->cooling = false;

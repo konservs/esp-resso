@@ -190,9 +190,8 @@ control/safety core. The task debounces each probe and publishes the result to
 `app_state_t` as a lock-free atomic (`brew_probe_state` / `steam_probe_state`);
 `control_task` just reads those. Each publish is timestamped, and `control_task`
 treats a probe as untrusted — heaters off, fill shut — when it reads
-`HAL_LEVEL_UNKNOWN` (the boot seed) or the timestamp is older than
-`LEVEL_STALE_MS` (10 s), so a stalled level task fails safe. Because it is its
-own task, its sensing cadence
+`HAL_LEVEL_UNKNOWN` or the timestamp is older than `LEVEL_STALE_MS` (10 s), so a
+stalled level task fails safe. Because it is its own task, its sensing cadence
 (`LEVEL_PERIOD_MS`) is tunable independently of the control period — see the
 `LEVEL_DEBUG_SWEEP` bench mode in [`hal_level.h`](../components/espresso_hal/include/hal/hal_level.h).
 
@@ -220,6 +219,27 @@ task's published state and opens the fill valve while the rod reads dry, gated o
 the reservoir having water and no fault (dry-fire protection). The reservoir
 float switch is a plain GPIO (no drive lines), so `control_task` still reads it
 directly.
+
+### A probe reads `HAL_LEVEL_UNKNOWN` until it settles
+
+The debouncers are seeded (`full` true, `fault` false) so the fill valve can
+never be opened by an unread probe. A seed is not a measurement, though, so the
+task publishes `HAL_LEVEL_UNKNOWN` until the probe has produced
+`LEVEL_DEBOUNCE_N` (3) identical raw reads in a row — a few hundred ms at the
+default cadence. Without that hold, the seed went out as if it were a reading,
+and an empty boiler announced itself **full** for the first moments of every
+boot.
+
+The gate latches open on that first settled run and never closes again, so a
+genuine wet→dry transition later on debounces normally rather than flickering
+back through "no reading". A probe so noisy it never manages three identical
+reads in a row never settles at all and stays unknown — visible on the screen,
+and fail-safe meanwhile, which is the right answer for a probe that cannot be
+believed.
+
+Why an explicit third state rather than a "safe" default in either direction:
+the safe assumption differs per consumer — see
+[safety.md](safety.md#a-missing-measurement-has-no-single-safe-substitute).
 
 ## Reservoir
 

@@ -14,9 +14,13 @@ A 128×64 I2C **SSD1306 OLED** (address 0x3C) shows:
   temperature, with the boiler's **two heater-element squares** stuck to the
   right edge — and the **machine status in the blue area** below (state, or the
   live shot timer while brewing, or a pump-cooldown countdown).
-  - The **drop icon** (left of the number) reflects the boiler's water level:
-    a **solid drop** = full, an **outline drop** = low/filling, and a **crossed
-    (slashed) drop** = level-sensor fault (`LVL_ERROR`).
+  - The **drop icon** (left of the number) reflects that boiler's level *probe*
+    and nothing else — not the reservoir, not the machine state, not whether a
+    fill is running: a **solid drop** = covered (`LVL_FULL`), an **outline drop**
+    = uncovered (`LVL_EMPTY`) or no settled reading yet (`LVL_INIT`, the first
+    few hundred ms after boot), and a **crossed (slashed) drop** = no usable
+    reading: the sense path is faulted (`LVL_ERROR`) or the level task has
+    stopped publishing (`LVL_STALE`).
   - The **element squares** are empty when that element is off and filled when
     it's being driven (including partial PID duty), which makes the load guard
     visible: during warm-up the steam boiler's upper square stays empty while the

@@ -33,27 +33,56 @@ static pump_guard_t make_guard(void)
 static esp_ms_t make_ready(pump_guard_t *g, esp_ms_t *now)
 {
     *g = make_guard();
-    *now = drive(g, 0, false, OFF_MIN); /* rest off the startup lock-out */
+    *now = drive(g, 0, false, PUMP_STARTUP_REST_MS); /* rest off the startup lock */
     return *now;
 }
 
 static void test_startup_is_locked_until_rested(void)
 {
-    /* Fresh power-up: assume the worst and hold off the first shot. */
+    /* Fresh power-up: assume some prior load and hold off the first shot, but
+     * only for the startup rest — not the full off_min_ms a filled bucket
+     * would need. */
     pump_guard_t g = make_guard();
     TEST_ASSERT_TRUE(pump_guard_cooling(&g));
     TEST_ASSERT_FALSE(pump_guard_can_brew(&g));
-    TEST_ASSERT_UINT32_WITHIN(200, OFF_MIN, pump_guard_cooldown_ms(&g));
+    TEST_ASSERT_UINT32_WITHIN(200, PUMP_STARTUP_REST_MS, pump_guard_cooldown_ms(&g));
+    TEST_ASSERT_TRUE(PUMP_STARTUP_REST_MS < OFF_MIN);
 
     /* An incomplete rest is not enough. */
-    esp_ms_t now = drive(&g, 0, false, OFF_MIN - 1000);
+    esp_ms_t now = drive(&g, 0, false, PUMP_STARTUP_REST_MS - 1000);
     TEST_ASSERT_FALSE(pump_guard_can_brew(&g));
 
-    /* A full rest unlocks the first shot. */
+    /* Serving the startup rest unlocks the first shot. */
     drive(&g, now, false, 1000);
     TEST_ASSERT_TRUE(pump_guard_can_brew(&g));
     TEST_ASSERT_FALSE(pump_guard_cooling(&g));
     TEST_ASSERT_EQUAL_UINT32(0, pump_guard_cooldown_ms(&g));
+}
+
+/* The startup rest is a wall-clock time, so it must not drift when a different
+ * pump rating is configured — the seed is scaled to the rating. */
+static void test_startup_rest_is_independent_of_rating(void)
+{
+    const pump_guard_config_t slow = { .on_max_ms = 240000u, .off_min_ms = 120000u };
+    pump_guard_t g;
+    pump_guard_init(&g, &slow);
+    pump_guard_update(&g, false, 0);
+    TEST_ASSERT_TRUE(pump_guard_cooling(&g));
+    TEST_ASSERT_UINT32_WITHIN(200, PUMP_STARTUP_REST_MS, pump_guard_cooldown_ms(&g));
+    drive(&g, 0, false, PUMP_STARTUP_REST_MS);
+    TEST_ASSERT_TRUE(pump_guard_can_brew(&g));
+}
+
+/* A rating whose whole rest is shorter than the startup rest cannot ask for
+ * more than one full rest: the seed caps at a full bucket. */
+static void test_startup_rest_caps_at_a_full_bucket(void)
+{
+    const pump_guard_config_t brief = { .on_max_ms = 60000u, .off_min_ms = 5000u };
+    pump_guard_t g;
+    pump_guard_init(&g, &brief);
+    pump_guard_update(&g, false, 0);
+    TEST_ASSERT_TRUE(pump_guard_cooling(&g));
+    TEST_ASSERT_UINT32_WITHIN(200, 5000u, pump_guard_cooldown_ms(&g));
 }
 
 static void test_short_run_never_locks(void)
@@ -137,6 +166,8 @@ int main(void)
     RUN_TEST(test_startup_is_locked_until_rested);
     RUN_TEST(test_short_run_never_locks);
     RUN_TEST(test_full_on_budget_trips_cooling);
+    RUN_TEST(test_startup_rest_is_independent_of_rating);
+    RUN_TEST(test_startup_rest_caps_at_a_full_bucket);
     RUN_TEST(test_cooldown_counts_down);
     RUN_TEST(test_rated_duty_recovers_fully);
     RUN_TEST(test_zero_on_max_disables_guard);

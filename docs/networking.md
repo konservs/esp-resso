@@ -58,7 +58,8 @@ in `idf.py monitor`; with a static IP it's the address you configured.
   health (with live press indicators for the two buttons and the brew-lever /
   steam-knob switches — filled/outlined circles),
   reservoir, and per-boiler temperature-sensor status (value + OK, or the
-  decoded MAX31865 fault) and water level (Full / Filling / Low / Error), plus
+  decoded MAX31865 fault) and water level (Initializing / Full / Empty /
+  Sensor error / No reading), plus
   machine state, live shot time/volume, **pump duty-cycle status, both fill-solenoid
   states (Open/Closed), and the live flow rate (ml/s)**. It also renders a **live
   mirror of the OLED** on a canvas (4× zoom; the top 16 rows drawn yellow and the
@@ -90,8 +91,12 @@ in `idf.py monitor`; with a static IP it's the address you configured.
   switches (all on the same expander), shown on the dashboard as filled/outlined
   circles next to the Buttons status. `fault` is the MAX31865 fault byte when `ok`
   is false (`255` = no SPI comms);
-  `level` is `0`=Full, `1`=Filling, `2`=Low, `3`=Error, `4`=Unknown (no trusted
-  reading yet, or the level task went stale). `pump.cooling` +
+  `level` is the boiler's level probe on its own — free of the reservoir, the
+  machine state and the fill decision: `0`=Initializing (no settled reading yet),
+  `1`=Full (probe covered), `2`=Empty (probe uncovered), `3`=Sensor error (sense
+  path faulted), `4`=No reading (the level task stopped publishing). Whether a
+  fill is actually running is `fill.brew`/`fill.steam`, and whether there is
+  water to fill *from* is `reservoir`. `pump.cooling` +
   `pump.ms` are the duty-cycle guard (rest remaining); `fill.brew`/`fill.steam`
   are the auto-fill solenoid commands; `flow.mls` is the smoothed flow rate in
   ml/s. `debug.out`/`debug.ms` report a running output test (below) — the output

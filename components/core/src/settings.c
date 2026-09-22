@@ -6,9 +6,10 @@
 #define DEFAULT_STEAM_SETPOINT  125.0f
 #define DEFAULT_MAX_TEMP        165.0f
 
-/* An enabled pump duty-cycle guard must allow at least this much continuous
- * run time; a sub-minute capacity would make the startup cooldown gate a shot
- * for longer than the pump can run. */
+/* An enabled pump duty-cycle guard must allow at least this much continuous run
+ * time. A sub-minute budget would trip on an ordinary shot, making the cooling
+ * lock-out the normal case rather than the exception. (This no longer bounds the
+ * startup rest, which is a fixed PUMP_STARTUP_REST_MS whatever the rating.) */
 #define PUMP_MIN_ON_MAX_MS      60000u
 
 void settings_load_defaults(settings_t *s)
@@ -91,9 +92,8 @@ espresso_result_t settings_validate(const settings_t *s)
     }
     /* When the duty-cycle guard is enabled (on_max_ms == 0 disables it, e.g.
      * for a rotary pump), the pump must have at least a minute of run capacity
-     * and a positive rest time — otherwise the initial cooldown could gate a
-     * shot for longer than the pump can even run, and the drain-rate arithmetic
-     * would be ill-defined. */
+     * — otherwise an ordinary shot trips the lock-out — and a positive rest
+     * time, without which the drain-rate arithmetic is ill-defined. */
     if (s->pump.on_max_ms > 0 &&
         (s->pump.on_max_ms < PUMP_MIN_ON_MAX_MS || s->pump.off_min_ms == 0)) {
         return ESPRESSO_ERR_RANGE;

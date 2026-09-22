@@ -137,16 +137,26 @@ accumulated run time as a **leaky-bucket thermal model**:
 
 When the bucket fills it trips a **cooling lock-out** and stays locked until it
 has fully drained (a full rest). The guard also **starts locked** at power-up:
-the firmware can't know how hard the pump was worked before this boot, so it
-assumes a full bucket and holds off even the first shot until a full rest has
-elapsed. Idle time — including the several-minute boiler warm-up — drains the
-bucket, so a cold start rarely actually waits, while a warm restart straight
-after heavy use correctly asks the user to wait.
+the firmware can't know how hard the pump was worked before this boot — the
+bucket doesn't survive a power cycle — so it assumes some prior load and holds
+off even the first shot.
+
+That startup rest is **`PUMP_STARTUP_REST_MS` (15 s)**, not a full `off_min_ms`.
+A full rest is the worst case, and charging it on every boot is stricter than the
+situation warrants: the pump was most likely idle, and the one case it guards
+against — a reset straight after heavy use — is rare next to the ordinary cold
+start it delays. 15 s still covers a quick reset mid-session. It is implemented
+by seeding the bucket with the load that drains in exactly that time at the
+configured rating, so it stays the same wall-clock wait whatever rating is set,
+and caps at a full bucket if it would ever exceed `off_min_ms`. Idle time —
+including the several-minute boiler warm-up — drains it anyway, so a cold start
+almost never waits at all.
 
 The rating lives in `settings.pump` (`pump_guard_config_t`); `on_max_ms = 0`
 disables the guard (e.g. for a rotary pump), and an enabled guard is required to
-allow **at least one minute** of run capacity (validated in `settings.c`) so the
-startup cooldown can never gate a shot for longer than the pump can even run.
+allow **at least one minute** of run capacity (validated in `settings.c`). Note
+the startup rest is a fixed time and no longer scales with `off_min_ms`, so it
+cannot outlast what the pump can run regardless.
 
 `control_task` advances the model every cycle with the actual pump command and,
 before it processes the lever, calls `machine_set_pump_ready()` so the
@@ -164,10 +174,20 @@ water and the machine not being faulted (dry-fire protection). The generic
 hysteresis helper is in [`core/filter.c`](../components/core/src/filter.c).
 
 **Dry-fire interlock.** The same debounced level also gates the *heaters*: a
-boiler is only heated while its probe reads covered. If it reads low/uncovered
-(including while filling) or the level read is faulted (`LVL_ERROR`), that
-boiler's heaters are forced fully off until auto-fill restores the level — so an
-empty or unreadable boiler is never energised. This is proactive; the safety
+boiler is only heated while its probe reads covered. If it reads uncovered
+(including while filling), faulted, or has no settled reading yet, that boiler's
+heaters are forced fully off until auto-fill restores the level — so an empty or
+unreadable boiler is never energised. Note this works from the probe state
+directly, not from the `level_status_t` shown on the screen: that one is a
+report, never a control input.
+
+Note the asymmetry with auto-fill above. Auto-fill needs an affirmative
+*uncovered* reading before it opens a valve; the interlock needs an affirmative
+*covered* reading before it allows heat. A level the firmware does not know
+therefore fails **both** closed — which is why an unknown level is carried as its
+own state rather than defaulted to "full", a value that is safe for the valve and
+actively dangerous for the elements. The reasoning is in
+[safety.md](safety.md#a-missing-measurement-has-no-single-safe-substitute). This is proactive; the safety
 supervisor's heat-timeout ([safety.md](safety.md)) is only the slow backstop.
 
 **The interlock is heaters-only — it never blocks or aborts a shot.** By design,

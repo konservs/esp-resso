@@ -38,9 +38,12 @@
 #define MAIN_Y2    44 /* secondary detail line (blue area)            */
 
 /* Water-level drop icon (7x10, MSB = leftmost) shown left of the temperature:
- *   FULL  = solid drop  (water present),
- *   EMPTY = outline     (low / filling),
- *   FAULT = outline with a diagonal slash (level sensor failed). */
+ *   FULL  = solid drop  (probe covered),
+ *   EMPTY = outline     (probe uncovered, or no settled reading yet),
+ *   FAULT = outline with a diagonal slash (sense path faulted, or the level
+ *           task has stopped publishing).
+ * The icon shows the probe and nothing else: an empty reservoir or a held-off
+ * fill does not change it. */
 #define DROP_W  7
 #define DROP_H 10
 #define DROP_Y  3 /* row within the yellow strip */
@@ -73,10 +76,12 @@ static const char *status_text(machine_state_t s)
 static void draw_boiler(uint8_t x0, level_status_t level, bool sensor_ok,
                         float temp, bool lo_on, bool hi_on)
 {
-    /* Water-level drop on the left: full / empty (low) / crossed (fault). */
-    const uint8_t *drop = (level == LVL_FULL)  ? DROP_FULL
-                        : (level == LVL_ERROR || level == LVL_UNKNOWN) ? DROP_FAULT
-                        :                        DROP_EMPTY;
+    /* Water-level drop on the left: full / empty / crossed (no usable reading).
+     * LVL_INIT deliberately shares the empty outline — it is the safe thing to
+     * look at while the probe settles, and it clears within a few hundred ms. */
+    const uint8_t *drop = (level == LVL_FULL) ? DROP_FULL
+                        : (level == LVL_ERROR || level == LVL_STALE) ? DROP_FAULT
+                        :                       DROP_EMPTY;
     hal_display_bitmap((uint8_t)(x0 + DROP_X), DROP_Y, DROP_W, DROP_H, drop);
 
     char buf[6];

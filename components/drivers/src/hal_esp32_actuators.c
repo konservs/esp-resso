@@ -4,6 +4,7 @@
  */
 #include "hal/hal_heater.h"
 #include "hal/hal_pump.h"
+#include "hal/hal_temp.h"   /* TEMP_SIM: simulated probes => heaters refused */
 #include "hal/hal_valve.h"
 
 #include "driver/gpio.h"
@@ -72,9 +73,19 @@ espresso_result_t hal_heater_init(void)
 
 void hal_heater_set_duty(hal_heater_id_t element, float duty)
 {
+#if TEMP_SIM
+    /* Simulated probes: the real boiler temperature is unknown, so nothing may
+     * energise an element. This is the last gate before the SSR — the control
+     * loop already zeroes both duties — so an element stays off even if some
+     * other path asks for heat. */
+    (void)element;
+    (void)duty;
+    return;
+#else
     if (element < HAL_HEATER_COUNT) {
         s_heater_duty[element] = espresso_clampf(duty, 0.0f, 1.0f);
     }
+#endif
 }
 
 void hal_heater_all_off(void)

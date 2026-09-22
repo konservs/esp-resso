@@ -28,16 +28,26 @@ static void drain_events(app_state_t *app)
     }
 }
 
-/* Classify a boiler probe for the diagnostics view, mirroring the fill logic. */
-static level_status_t level_of(bool trusted, bool full, bool filling, bool fault,
-                               bool reservoir_ok)
+/* Report what the probe says, and only that: full / empty / faulted, plus the
+ * two "there is no measurement" cases. Nothing about the reservoir, the machine
+ * state or the fill decision belongs here — those are shown separately, and
+ * mixing them in is what once made an empty reservoir look like a dead sensor.
+ * The fill decision further down is computed from the same probe states, not
+ * from this. */
+static level_status_t level_of(bool published, bool fresh, hal_level_state_t probe)
 {
-    if (!trusted)      return LVL_UNKNOWN; /* no fresh reading (boot / stale)     */
-    if (fault)         return LVL_ERROR; /* sense path shorted/stuck — untrusted */
-    if (full)          return LVL_FULL;
-    if (filling)       return LVL_FILLING;
-    if (!reservoir_ok) return LVL_ERROR; /* low but no water to fill from */
-    return LVL_LOW;                       /* low, fill held off (e.g. fault) */
+    if (!published) {
+        return LVL_INIT;  /* level task has not published anything yet */
+    }
+    if (!fresh) {
+        return LVL_STALE; /* it published once, then stopped: stalled or dead */
+    }
+    switch (probe) {
+    case HAL_LEVEL_WET:   return LVL_FULL;
+    case HAL_LEVEL_DRY:   return LVL_EMPTY;
+    case HAL_LEVEL_FAULT: return LVL_ERROR;
+    default:              return LVL_INIT; /* UNKNOWN: still settling */
+    }
 }
 
 void control_task(void *arg)
@@ -85,7 +95,9 @@ void control_task(void *arg)
         /* Distrust a level with no fresh reading: not published yet (UNKNOWN at
          * boot) or older than LEVEL_STALE_MS (level task stalled/died). An
          * untrusted probe forces that boiler's heaters off and its fill shut. */
-        const bool level_fresh = espresso_elapsed_ms(level_ts, now) < LEVEL_STALE_MS;
+        const bool level_published = (level_ts != 0);
+        const bool level_fresh =
+            level_published && espresso_elapsed_ms(level_ts, now) < LEVEL_STALE_MS;
         const bool brew_trusted = level_fresh && brew_lvl != HAL_LEVEL_UNKNOWN;
         const bool steam_trusted = level_fresh && steam_lvl != HAL_LEVEL_UNKNOWN;
         const bool brew_full = brew_trusted && brew_lvl == HAL_LEVEL_WET;
@@ -117,9 +129,9 @@ void control_task(void *arg)
             both_ready = bt.ok && st.ok && bo.at_setpoint && so.at_setpoint;
 
             /* Dry-fire interlock: never energise a boiler's heaters unless its
-             * water level is confirmed present. A low/uncovered probe (LVL_LOW /
-             * LVL_FILLING) or a faulted level reading (LVL_ERROR) forces that
-             * boiler fully off until auto-fill covers the probe again. This is
+             * water level is confirmed present. An uncovered probe, a faulted
+             * one, or one with no settled reading yet all force that boiler
+             * fully off until auto-fill covers the probe again. This is
              * the proactive guard; the safety supervisor's heat-timeout is only
              * the slow backstop. */
             if (!brew_full || brew_fault) {
@@ -128,6 +140,17 @@ void control_task(void *arg)
             if (!steam_full || steam_fault) {
                 steam_duty = 0.0f;
             }
+
+#if TEMP_SIM
+            /* Simulated probes (see TEMP_SIM in hal/hal_temp.h): the readings
+             * driving these PIDs — and the safety supervisor — are invented, so
+             * ask for no heat at all. Zeroing here as well as at the HAL keeps
+             * the telemetry and the supervisor's heat timer agreeing with what
+             * the SSRs are really doing; otherwise it would sit timing a heat
+             * that never happens and trip HEAT_TIMEOUT. */
+            brew_duty = 0.0f;
+            steam_duty = 0.0f;
+#endif
 
             /* Cap simultaneous heater elements to the mains budget: brew boiler
              * has priority (both elements while warming, lower-only once ready),
@@ -189,10 +212,12 @@ void control_task(void *arg)
         const bool can_fill = (state != MACHINE_FAULT) && reservoir_ok;
         bool brew_filling = can_fill && brew_dry;
         bool steam_filling = can_fill && steam_dry;
-        /* Level view reflects the auto-fill decision, before any debug override
-         * below — a bench pulse should not read as "the machine is filling". */
-        app->brew_level = level_of(brew_trusted, brew_full, brew_filling, brew_fault, reservoir_ok);
-        app->steam_level = level_of(steam_trusted, steam_full, steam_filling, steam_fault, reservoir_ok);
+        /* The level view is the probe reading itself, so it stays truthful
+         * whatever the fill logic above decided — and a bench pulse below
+         * cannot make an empty boiler read as anything but empty. Whether a
+         * fill is actually running is published separately, in valve_*_open. */
+        app->brew_level = level_of(level_published, level_fresh, brew_lvl);
+        app->steam_level = level_of(level_published, level_fresh, steam_lvl);
         app->reservoir_present = reservoir_ok;
 
         /* Admin bench override. Applied last so it wins over the normal

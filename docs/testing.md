@@ -94,3 +94,20 @@ gcovr -r .. --html-details -o coverage.html   # or lcov/genhtml
 ESP-IDF supports running Unity on the device and via QEMU/pytest-embedded. The
 portable split means the bulk of logic is already covered on the host; on-target
 tests would focus on the drivers (SPI timing, GPIO, I2C).
+
+## Bench-debug flags
+
+Two compile-time switches exist to get a partly-wired board through bring-up.
+Both are **temporary** — check they are back to `0` before the machine sees
+mains.
+
+| Flag | Where | What it does |
+|---|---|---|
+| `LEVEL_DEBUG_SWEEP` | [`hal_level.h`](../components/espresso_hal/include/hal/hal_level.h) | The level task parades the four rod drive states ~2 s each for a voltmeter instead of sensing. Publishes no readings, so the fill valves stay shut. |
+| `TEMP_SIM` | [`hal_temp.h`](../components/espresso_hal/include/hal/hal_temp.h) | The MAX31865s are never touched; both boilers report a fixed always-ok temperature (`TEMP_SIM_BREW_C` / `TEMP_SIM_STEAM_C`). Gets a board with unwired RTD probes past the `SENSOR_FAULT` trip so the state machine, level sensing, UI and dashboard can be exercised. |
+
+`TEMP_SIM` feeds invented temperatures to the safety supervisor as well as the
+PIDs, so the supervisor is no backstop while it is set. The heaters are
+therefore refused in two places: the control loop zeroes both boiler duties, and
+`hal_heater_set_duty()` ignores what it is handed, so no SSR can be driven at
+all.
