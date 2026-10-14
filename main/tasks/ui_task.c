@@ -213,6 +213,11 @@ void ui_task(void *arg)
         vTaskDelayUntil(&last, pdMS_TO_TICKS(UI_PERIOD_MS));
         const esp_ms_t now = hal_time_ms();
 
+        /* One expander transfer per frame; everything below reads that
+         * snapshot, so the switches and buttons a frame acts on are all from
+         * the same instant. */
+        hal_input_poll();
+
         /* Machine control switches -> machine events on edges. */
         const bool bsw = hal_switch_brew();
         const bool ssw = hal_switch_steam();

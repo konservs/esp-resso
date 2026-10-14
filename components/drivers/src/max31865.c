@@ -16,6 +16,7 @@
  * TODO: expose 50/60 Hz selection if this ever ships outside 50 Hz mains. */
 #define MAX31865_CONFIG_BASE   0xC1
 #define MAX31865_CFG_3WIRE     0x10 /* config D4: 3-wire lead compensation */
+#define MAX31865_CONFIG_STATIC_MASK 0xF1 /* D7..D4 and D0: bits that must read back as written */
 
 static esp_err_t write_reg(max31865_t *dev, uint8_t reg, uint8_t val)
 {
@@ -66,21 +67,48 @@ esp_err_t max31865_add(max31865_t *dev, spi_host_device_t host, int cs_gpio,
     return write_reg(dev, MAX31865_REG_CONFIG, dev->config);
 }
 
+esp_err_t max31865_read_raw_regs(max31865_t *dev, uint8_t out[8])
+{
+    /* The chip auto-increments the address, but read_regs() caps a burst at
+     * four bytes, so take the map in two halves. */
+    esp_err_t err = read_regs(dev, MAX31865_REG_CONFIG, &out[0], 4);
+    if (err == ESP_OK) {
+        err = read_regs(dev, MAX31865_REG_CONFIG + 4, &out[4], 4);
+    }
+    return err;
+}
+
 bool max31865_read_celsius(max31865_t *dev, temp_c_t *out_c, uint8_t *out_fault)
 {
     if (out_fault != NULL) {
         *out_fault = 0;
     }
 
-    uint8_t rtd[2] = { 0 };
-    if (read_regs(dev, MAX31865_REG_RTD_MSB, rtd, sizeof(rtd)) != ESP_OK) {
+    /* Config and RTD word in one burst (the address auto-increments). The
+     * config readback is the integrity check: a chip that is not holding what
+     * was written is unpowered, reset, or on a garbled SPI link, and whatever
+     * follows it is not a measurement even when it happens to decode to a
+     * plausible resistance. Bits D3..D1 are self-clearing (fault-detect cycle,
+     * fault clear) so they are masked out of the comparison. */
+    uint8_t regs[3] = { 0 };
+    if (read_regs(dev, MAX31865_REG_CONFIG, regs, sizeof(regs)) != ESP_OK) {
         if (out_fault != NULL) {
             *out_fault = 0xFF; /* SPI/bus failure — distinct from an RTD fault */
         }
         return false;
     }
+    if ((regs[0] & MAX31865_CONFIG_STATIC_MASK) !=
+        (dev->config & MAX31865_CONFIG_STATIC_MASK)) {
+        if (out_fault != NULL) {
+            *out_fault = 0xFE; /* config readback mismatch: chip absent/reset/garbled */
+        }
+        /* Re-arm in case the chip simply lost its configuration (brown-out,
+         * reset); a healthy part then recovers on the next read. */
+        write_reg(dev, MAX31865_REG_CONFIG, dev->config);
+        return false;
+    }
 
-    const uint16_t raw = (uint16_t)((rtd[0] << 8) | rtd[1]);
+    const uint16_t raw = (uint16_t)((regs[1] << 8) | regs[2]);
     if (raw & 0x0001) {
         /* Bit 0 set => an RTD fault was detected; surface the detail and clear
          * the latch so a transient fault can recover on the next read. */

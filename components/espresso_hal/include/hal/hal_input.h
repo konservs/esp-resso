@@ -32,6 +32,19 @@ espresso_result_t hal_input_init(void);
 /** True if the input expander is responding (last I2C read succeeded). */
 bool hal_input_ok(void);
 
+/**
+ * @brief Sample every input once, into a snapshot the accessors then read from.
+ *
+ * Call this once per control cycle, before the accessors below. They report the
+ * snapshot rather than going to the hardware themselves, so all the inputs a
+ * cycle acts on are consistent with each other and the cost of reading them
+ * does not scale with how many there are — which matters when they share one
+ * I2C expander at the far end of a cable, where each transfer is both slow and
+ * a chance to fail. Without a poll the accessors still work, returning whatever
+ * the last snapshot holds.
+ */
+void hal_input_poll(void);
+
 /** Read the current debounced button states. */
 hal_buttons_t hal_buttons_read(void);
 

@@ -86,6 +86,12 @@ void control_task(void *arg)
     bool prev_bt_ok = true, prev_st_ok = true;
     uint8_t prev_bt_fault = 0, prev_st_fault = 0;
 
+    /* Periodic probe readout for bench bring-up: the health report above fires
+     * on change only, so a working front-end would otherwise never show its
+     * number in the log (the display and dashboard are the normal consumers). */
+    const TickType_t TEMP_LOG_PERIOD = pdMS_TO_TICKS(5000);
+    TickType_t next_temp_log = xTaskGetTickCount();
+
     for (;;) {
         vTaskDelayUntil(&last, period);
 
@@ -312,7 +318,8 @@ void control_task(void *arg)
          * every cycle and buries everything else in the log. The fault byte is
          * the MAX31865's, or the driver's stand-in for a reading that is not a
          * temperature at all (0x40 near-zero resistance, 0x80 absurdly high,
-         * 0xFF the SPI transfer itself failed). */
+         * 0xFE config did not read back as written, 0xFF the SPI transfer
+         * itself failed). */
         if (bt.ok != prev_bt_ok || st.ok != prev_st_ok ||
             bt.fault != prev_bt_fault || st.fault != prev_st_fault) {
             if (!bt.ok || !st.ok) {
@@ -325,6 +332,12 @@ void control_task(void *arg)
             prev_st_ok = st.ok;
             prev_bt_fault = bt.fault;
             prev_st_fault = st.fault;
+        }
+        if ((int32_t)(xTaskGetTickCount() - next_temp_log) >= 0) {
+            next_temp_log += TEMP_LOG_PERIOD;
+            ESP_LOGI(TAG, "temp brew %.1fC ok=%d fault=0x%02X | steam %.1fC ok=%d fault=0x%02X",
+                     (double)bt.celsius, bt.ok, bt.fault,
+                     (double)st.celsius, st.ok, st.fault);
         }
     }
 }

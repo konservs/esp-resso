@@ -25,6 +25,7 @@ coverage*/
 *.swp
 .DS_Store
 Thumbs.db
+debug.log
 
 .claude/prompts.md
 

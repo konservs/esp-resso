@@ -52,11 +52,24 @@ esp_err_t max31865_add(max31865_t *dev, spi_host_device_t host, int cs_gpio,
  * @brief Read and convert one temperature sample.
  * @param out_c     Receives the temperature on success.
  * @param out_fault Optional (may be NULL). On failure, receives the MAX31865
- *                  fault-status byte (register 0x07 bitmask), or 0xFF if the SPI
- *                  read itself failed (no chip / bus fault). 0 on success.
+ *                  fault-status byte (register 0x07 bitmask); 0xFF if the SPI
+ *                  read itself failed (no chip / bus fault); 0xFE if the config
+ *                  register did not read back as written (chip unpowered, reset
+ *                  or on a garbled link — the RTD word is then not trusted);
+ *                  0x40 / 0x80 for a resistance outside the plausible band.
+ *                  0 on success.
  * @return true on success; false if the chip reports an RTD fault (open/short).
  */
 bool max31865_read_celsius(max31865_t *dev, temp_c_t *out_c, uint8_t *out_fault);
+
+/**
+ * @brief Bench diagnostic: read registers 0x00..0x07 verbatim.
+ *
+ * out[0] is the configuration register as the chip holds it (compare with what
+ * was written: a mismatch means the SPI link is garbling), out[1..2] the raw RTD
+ * word, out[3..6] the fault thresholds, out[7] the fault status.
+ */
+esp_err_t max31865_read_raw_regs(max31865_t *dev, uint8_t out[8]);
 
 #ifdef __cplusplus
 }

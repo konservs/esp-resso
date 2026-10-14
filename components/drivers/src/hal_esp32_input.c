@@ -8,8 +8,14 @@
  * task polls slowly (~125 ms), which filters mechanical bounce, and
  * core/buttons interprets gestures from there.
  *
- * The whole 8-bit port is read per call; the last good value is cached so a
- * transient I2C NAK reports the previous state rather than a phantom press.
+ * The whole 8-bit port arrives in one transfer, so ::hal_input_poll takes that
+ * one snapshot per cycle and the accessors just decode bits out of it. That
+ * keeps a cycle's view of the inputs self-consistent, and keeps one polling
+ * cycle to a single I2C transaction — on a long bus, three separate reads is
+ * three times the chance of catching a glitch and, when the bus is jammed,
+ * three times the stall. The last good value is cached, so a transient NAK
+ * reports the previous state rather than a phantom press.
+ *
  * Spare expander bits (P4..P7) are free for future buttons.
  */
 #include "hal/hal_input.h"
@@ -32,34 +38,33 @@ bool hal_input_ok(void)
     return s_ok;
 }
 
-/* Refresh the cached port snapshot; keep the last value on an I2C error. */
-static uint8_t read_port(void)
+void hal_input_poll(void)
 {
+    /* On an I2C error pcf8574_read leaves s_port alone, so the snapshot keeps
+     * the last good sample and the UI holds still instead of jittering. */
     s_ok = (pcf8574_read(&s_port) == ESP_OK);
-    return s_port;
 }
 
 /* Active-low: a pressed/engaged contact pulls its expander pin to 0. */
-static bool pressed(uint8_t port, int bit)
+static bool pressed(int bit)
 {
-    return ((port >> bit) & 0x01) == 0;
+    return ((s_port >> bit) & 0x01) == 0;
 }
 
 hal_buttons_t hal_buttons_read(void)
 {
-    const uint8_t port = read_port();
     hal_buttons_t b;
-    b.a = pressed(port, EXP_BTN_A);
-    b.b = pressed(port, EXP_BTN_B);
+    b.a = pressed(EXP_BTN_A);
+    b.b = pressed(EXP_BTN_B);
     return b;
 }
 
 bool hal_switch_brew(void)
 {
-    return pressed(read_port(), EXP_SWITCH_BREW);
+    return pressed(EXP_SWITCH_BREW);
 }
 
 bool hal_switch_steam(void)
 {
-    return pressed(read_port(), EXP_SWITCH_STEAM);
+    return pressed(EXP_SWITCH_STEAM);
 }

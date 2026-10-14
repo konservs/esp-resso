@@ -39,7 +39,7 @@ hal_temp_reading_t hal_temp_read(hal_boiler_id_t boiler);
  * *not* a backstop here — it is fed the simulated temperatures too.
  *
  * Set back to 0 before the machine is anywhere near mains. */
-#define TEMP_SIM 1
+#define TEMP_SIM 0
 
 /** Simulated brew-boiler temperature while ::TEMP_SIM is set (deg C). */
 #define TEMP_SIM_BREW_C  93.0f

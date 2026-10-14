@@ -18,7 +18,7 @@ A dual-boiler E61 machine:
 | Qty | Part | Notes |
 |----:|------|-------|
 | 1 | ESP32 dev module (WROOM-32) | Dual-core, classic ESP32 |
-| 2 | MAX31865 RTD amplifier | One per boiler; 430 Ω reference for PT100 |
+| 2 | MAX31865 RTD amplifier | One per boiler; 400 Ω precision reference for PT100 (`RTD_RREF` in `hal_esp32_temp.c` must match) |
 | 2 | PT100 RTD probe | M4/M5 threaded or clamp, boiler temperature. **3-wire** — the firmware configures the MAX31865 to match (`RTD_WIRES` in `hal_esp32_temp.c`), and the board's RTDIN/FORCE jumpers must agree |
 | 4 | Solid-state relay (zero-cross) | Boiler heaters — **two per boiler** (lower + upper element, ~400 W each), slow-PWM; DC-input, driven at 12 V via the ULN2003. Firmware runs at most 3 at once on a 120 V/15 A circuit — see the load guard in [control.md](control.md) |
 | 1 | Pump + zero-cross SSR | **Ulka EFX5** vibratory (rated 2 min ON / 1 min OFF — firmware enforces the duty cycle, see [control.md](control.md)); zero-cross SSR enables pulse-skip flow. A rotary pump also fits — size the SSR for motor inrush |
@@ -139,9 +139,32 @@ For more than 8 inputs, add a second expander at a different address.
   the 74HC139 disabled from reset until `hal_level_init()` runs — GPIO 17 floats,
   and the decoder enable is active-low, so without R11 a rod could be energised at
   boot. Do not remove it.
-- The shared I2C bus wants **external ~4.7 kΩ pull-ups** on SDA/SCL (the OLED
-  breakout usually carries them); the firmware also enables the weak internal
-  pull-ups as a fallback.
+- The shared I2C bus **needs external pull-ups on SDA/SCL, and the board does
+  not carry any** — nothing but the ESP32 pad and J8 sits on those two nets.
+  Do not rely on a breakout module bringing its own. The ESP32's internal
+  pull-ups are ~45 kΩ, which is far too weak here: against the ~50 pF of a short
+  cable that is already a ~1.9 µs rise time, against the I2C limit of 300 ns at
+  400 kHz. The panel comes up, then smears or drops out as the bus loads.
+  Fit **2.2 kΩ** to 3.3 V on each line (3.3 kΩ if the run is short). At 3.3 V
+  that is 1.5 mA per line, comfortably inside the 3 mA both the SSD1306 and the
+  PCF8574 are specified to sink. The firmware still enables the internal
+  pull-ups; in parallel they neither help nor hurt.
+- **J8's pinout is poor for a long cable.** It is `3V3 / NC / SDA / SCL / GND`,
+  so SDA and SCL are neighbours with no ground between them and only one ground
+  at the far end — every SCL edge couples into SDA. Pin 2 is a genuine
+  no-connect, so jumper it to GND and wire the cable as
+  `3V3 / GND / SDA / SCL / GND`; better still, run SDA and SCL as separate
+  twisted pairs each with its own ground. Give the remote end its own 100 nF +
+  10 µF across 3V3/GND — the OLED charge pump is a pulsed load at the end of a
+  long, inductive feed. **Note the caps go across the rail, never on a signal
+  line**: 100 nF from SDA to GND is a dead bus.
+- A jammed bus is recovered in firmware, not by a power cycle — see
+  [`i2c_bus.h`](../components/drivers/include/drivers/i2c_bus.h). A driver that
+  keeps failing asks for escalating recovery: first a soft reset (peripheral FSM
+  reset plus nine clock pulses to walk a stuck slave off SDA), then a full
+  teardown and rebuild with each chip re-initialised. Attempts are paced and
+  back off, so an unplugged cable costs one attempt every few seconds rather
+  than one per UI frame.
 
 ## Power
 
