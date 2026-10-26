@@ -6,6 +6,8 @@
  */
 #include "app.h"
 
+#include "core/probe_guard.h"
+
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -86,6 +88,14 @@ void control_task(void *arg)
     bool prev_bt_ok = true, prev_st_ok = true;
     uint8_t prev_bt_fault = 0, prev_st_fault = 0;
 
+    /* Ride through a short run of transient probe faults (lead pick-up, SSR /
+     * pump switching) by holding the last good temperature; only a sustained
+     * fault is reported upward, where the safety supervisor latches on it.
+     * See core/probe_guard.h. */
+    probe_guard_t brew_guard, steam_guard;
+    probe_guard_init(&brew_guard, PROBE_GUARD_DEFAULT_TRIP);
+    probe_guard_init(&steam_guard, PROBE_GUARD_DEFAULT_TRIP);
+
     /* Periodic probe readout for bench bring-up: the health report above fires
      * on change only, so a working front-end would otherwise never show its
      * number in the log (the display and dashboard are the normal consumers). */
@@ -96,9 +106,33 @@ void control_task(void *arg)
         vTaskDelayUntil(&last, period);
 
         /* Sample hardware outside the lock (SPI / pulse counter / GPIO). */
-        const hal_temp_reading_t bt = hal_temp_read(HAL_BOILER_BREW);
-        const hal_temp_reading_t st = hal_temp_read(HAL_BOILER_STEAM);
+        const hal_temp_reading_t bt_raw = hal_temp_read(HAL_BOILER_BREW);
+        const hal_temp_reading_t st_raw = hal_temp_read(HAL_BOILER_STEAM);
         float flow_ml = hal_flow_ml();
+
+        /* Debounced view: everything below acts on bt/st, never on the raw
+         * samples. A held sample keeps ok=true with the previous temperature
+         * and fault=0 (the transient's code is logged separately). */
+        const probe_guard_out_t bg =
+            probe_guard_update(&brew_guard, bt_raw.ok, bt_raw.celsius, bt_raw.fault);
+        const probe_guard_out_t sg =
+            probe_guard_update(&steam_guard, st_raw.ok, st_raw.celsius, st_raw.fault);
+        const hal_temp_reading_t bt = {
+            .celsius = bg.celsius, .ok = bg.ok, .fault = bg.ok ? 0 : bg.fault
+        };
+        const hal_temp_reading_t st = {
+            .celsius = sg.celsius, .ok = sg.ok, .fault = sg.ok ? 0 : sg.fault
+        };
+        /* One line per transient run, on its first masked sample: a probe that
+         * glitches often is worth knowing about before it ever trips. */
+        if (bg.held && brew_guard.bad_run == 1) {
+            ESP_LOGI(TAG, "brew probe transient fault=0x%02X, holding %.1fC",
+                     bg.fault, (double)bg.celsius);
+        }
+        if (sg.held && steam_guard.bad_run == 1) {
+            ESP_LOGI(TAG, "steam probe transient fault=0x%02X, holding %.1fC",
+                     sg.fault, (double)sg.celsius);
+        }
 
         /* Boiler levels come from the level task (debounced, its own cadence) via
          * lock-free atomics — the control loop never blocks on a probe read. Read

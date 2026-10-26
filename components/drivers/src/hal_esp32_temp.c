@@ -26,9 +26,12 @@ hal_temp_reading_t hal_temp_read(hal_boiler_id_t boiler)
 
 #else /* !TEMP_SIM — the real front-ends */
 
+#include "driver/gpio.h"
 #include "driver/spi_master.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 #include "core/rtd.h"
 #include "drivers/max31865.h"
@@ -56,8 +59,26 @@ static max31865_t s_steam;
 #define TEMP_REG_DUMP 1
 #define TEMP_REG_DUMP_PERIOD_US (5 * 1000 * 1000)
 
+/* Bench bring-up: before the SPI bus comes up, hold the steam chip-select LOW
+ * for a few seconds so its DC level can be read on U7 pin 16 with a meter. A
+ * CS pulse during a real transfer is far too short to see. Set to 0 (or delete)
+ * once the question is answered. */
+#define TEMP_CS_BENCH_TEST 0
+#define TEMP_CS_BENCH_HOLD_MS 15000
+
 espresso_result_t hal_temp_init(void)
 {
+#if TEMP_CS_BENCH_TEST
+    gpio_reset_pin(PIN_RTD_STEAM_CS);
+    gpio_set_direction(PIN_RTD_STEAM_CS, GPIO_MODE_OUTPUT);
+    gpio_set_level(PIN_RTD_STEAM_CS, 0);
+    ESP_LOGW("temp", "BENCH: steam CS (GPIO %d) held LOW for %d s - measure U7 pin 16 now",
+             PIN_RTD_STEAM_CS, TEMP_CS_BENCH_HOLD_MS / 1000);
+    vTaskDelay(pdMS_TO_TICKS(TEMP_CS_BENCH_HOLD_MS));
+    gpio_set_level(PIN_RTD_STEAM_CS, 1);
+    ESP_LOGW("temp", "BENCH: steam CS released HIGH, starting SPI");
+#endif
+
     spi_bus_config_t bus = { 0 };
     bus.sclk_io_num = PIN_SPI_SCLK;
     bus.mosi_io_num = PIN_SPI_MOSI;
