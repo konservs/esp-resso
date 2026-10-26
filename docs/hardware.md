@@ -185,6 +185,15 @@ per relay coil ×2 — ≈130 mA total), so a **12 V / 1 A** supply is still eno
 Full rail tree, recommended chips (buck / LDO / isolated DC-DC), decoupling and
 protection, and the per-rail power budget: **[power.md](power.md)**.
 
+## Brew-boiler-only builds
+
+The steam side can be left unpopulated. Clear **Steam boiler fitted** in
+`menuconfig` (`CONFIG_ESPRESSO_STEAM_BOILER`; the committed `sdkconfig.defaults`
+currently has it off for bench work). The firmware then never initialises or
+reads the steam MAX31865, never drives the steam heaters, fill valve or level
+probe, ignores the steam knob, and the safety supervisor does not require a
+steam temperature. READY needs only the brew boiler at setpoint.
+
 ## Sensing details
 
 - **Temperature:** 3-wire PT100 over MAX31865 (SPI, mode 1). The wiring mode is

@@ -107,7 +107,12 @@ void control_task(void *arg)
 
         /* Sample hardware outside the lock (SPI / pulse counter / GPIO). */
         const hal_temp_reading_t bt_raw = hal_temp_read(HAL_BOILER_BREW);
+#if STEAM_ENABLED
         const hal_temp_reading_t st_raw = hal_temp_read(HAL_BOILER_STEAM);
+#else
+        /* Not fitted: a constant "no reading" that the guard never promotes. */
+        const hal_temp_reading_t st_raw = { .celsius = 0.0f, .ok = false, .fault = 0 };
+#endif
         float flow_ml = hal_flow_ml();
 
         /* Debounced view: everything below acts on bt/st, never on the raw
@@ -177,10 +182,16 @@ void control_task(void *arg)
 
         if (state != MACHINE_FAULT) {
             const boiler_output_t bo = boiler_update(&app->brew_boiler, bt.celsius, dt_s);
-            const boiler_output_t so = boiler_update(&app->steam_boiler, st.celsius, dt_s);
             brew_duty = bt.ok ? bo.heater_duty : 0.0f;
+#if STEAM_ENABLED
+            const boiler_output_t so = boiler_update(&app->steam_boiler, st.celsius, dt_s);
             steam_duty = st.ok ? so.heater_duty : 0.0f;
             both_ready = bt.ok && st.ok && bo.at_setpoint && so.at_setpoint;
+#else
+            /* Brew-only build: READY is the brew boiler alone. */
+            steam_duty = 0.0f;
+            both_ready = bt.ok && bo.at_setpoint;
+#endif
 
             /* Dry-fire interlock: never energise a boiler's heaters unless its
              * water level is confirmed present. An uncovered probe, a faulted
@@ -260,7 +271,7 @@ void control_task(void *arg)
                               !pump_owned_by_brew(state) && reservoir_ok &&
                               pump_guard_can_brew(&app->pump_guard);
         bool brew_filling = can_fill && brew_dry;
-        bool steam_filling = can_fill && steam_dry;
+        bool steam_filling = STEAM_ENABLED && can_fill && steam_dry;
         if (brew_filling || steam_filling) {
             pump_on = true;
             pump_duty = FILL_PUMP_DUTY;
@@ -311,7 +322,7 @@ void control_task(void *arg)
         switch (dbg) {
         case DEBUG_OUT_PUMP:       pump_on = true; pump_duty = 1.0f; break;
         case DEBUG_OUT_FILL_BREW:  brew_filling = true;  break;
-        case DEBUG_OUT_FILL_STEAM: steam_filling = true; break;
+        case DEBUG_OUT_FILL_STEAM: steam_filling = STEAM_ENABLED; break;
         default: break;
         }
         app->debug_out = dbg;
@@ -356,11 +367,15 @@ void control_task(void *arg)
          * itself failed). */
         if (bt.ok != prev_bt_ok || st.ok != prev_st_ok ||
             bt.fault != prev_bt_fault || st.fault != prev_st_fault) {
-            if (!bt.ok || !st.ok) {
+            if (!bt.ok || (STEAM_ENABLED && !st.ok)) {
                 ESP_LOGW(TAG, "sensor fault brew_ok=%d fault=0x%02X steam_ok=%d fault=0x%02X",
                          bt.ok, bt.fault, st.ok, st.fault);
             } else {
+#if STEAM_ENABLED
                 ESP_LOGI(TAG, "both temperature probes reading OK");
+#else
+                ESP_LOGI(TAG, "brew temperature probe reading OK (steam not fitted)");
+#endif
             }
             prev_bt_ok = bt.ok;
             prev_st_ok = st.ok;
@@ -369,9 +384,14 @@ void control_task(void *arg)
         }
         if ((int32_t)(xTaskGetTickCount() - next_temp_log) >= 0) {
             next_temp_log += TEMP_LOG_PERIOD;
+#if STEAM_ENABLED
             ESP_LOGI(TAG, "temp brew %.1fC ok=%d fault=0x%02X | steam %.1fC ok=%d fault=0x%02X",
                      (double)bt.celsius, bt.ok, bt.fault,
                      (double)st.celsius, st.ok, st.fault);
+#else
+            ESP_LOGI(TAG, "temp brew %.1fC ok=%d fault=0x%02X | steam not fitted",
+                     (double)bt.celsius, bt.ok, bt.fault);
+#endif
         }
     }
 }

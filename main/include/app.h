@@ -12,6 +12,8 @@
 
 #include <stdatomic.h>
 
+#include "sdkconfig.h"
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
@@ -22,6 +24,16 @@
 #include "core/pump_guard.h"
 #include "core/safety.h"
 #include "core/settings.h"
+
+/* Steam boiler fitted? (menuconfig: ESP.Resso -> "Steam boiler fitted"). When 0
+ * the steam side does not exist to the firmware: no RTD read, no heater, fill
+ * or level drive, the steam knob is ignored and the safety supervisor does not
+ * require a steam temperature. See the Kconfig help text. */
+#ifdef CONFIG_ESPRESSO_STEAM_BOILER
+#define STEAM_ENABLED 1
+#else
+#define STEAM_ENABLED 0
+#endif
 #include "core/state_machine.h"
 #include "hal/hal_level.h"
 #include "hal/hal_temp.h"

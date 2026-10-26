@@ -181,7 +181,9 @@ static const char DASHBOARD_HTML[] =
     "[{on:d.btn.a,name:'A (left / minus)'},{on:d.btn.b,name:'B (right / plus)'},"
     "{on:d.btn.brew,name:'Brew lever'},{on:d.btn.steam,name:'Steam knob'}]:[]);"
     "setTemp(g('bt'),d.brew);setLevel(g('bl'),d.brew.level);"
-    "setTemp(g('stt'),d.steam);setLevel(g('sl'),d.steam.level);"
+    "if(d.steam.fitted===false){g('stt').textContent='not fitted';g('stt').className='st';"
+    "g('sl').textContent='not fitted';g('sl').className='st'}"
+    "else{setTemp(g('stt'),d.steam);setLevel(g('sl'),d.steam.level)}"
     "g('shot').className='st';g('shot').textContent=(d.shot.ms/1000).toFixed(1)+'s / '+d.shot.ml.toFixed(0)+'ml';"
     "if(d.pump.cooling){g('pump').textContent='Cooling '+Math.ceil(d.pump.ms/1000)+'s';g('pump').className='st warn'}"
     "else{g('pump').textContent='Ready';g('pump').className='st ok'}"
@@ -190,6 +192,7 @@ static const char DASHBOARD_HTML[] =
     "g('flow').className='st';g('flow').textContent=d.flow.mls.toFixed(1)+' ml/s';"
     "g('admin').style.display=d.role==='admin'?'':'none';"
     "setPulse(d.debug);"
+    "if(d.steam.fitted===false)g('p_fill_steam').disabled=true;"
     "}catch(e){g('state').textContent='offline'}}"
     "var POUT=['pump','fill_brew','fill_steam'],PNAME={pump:'Pump',"
     "fill_brew:'Brew fill',fill_steam:'Steam fill'};"
@@ -472,7 +475,7 @@ static esp_err_t telemetry_get(httpd_req_t *req)
         "\"display\":%s,\"buttons\":%s,"
         "\"btn\":{\"a\":%s,\"b\":%s,\"brew\":%s,\"steam\":%s},\"reservoir\":%s,"
         "\"brew\":{\"t\":%.1f,\"sp\":%.1f,\"ok\":%s,\"fault\":%u,\"level\":%d},"
-        "\"steam\":{\"t\":%.1f,\"sp\":%.1f,\"ok\":%s,\"fault\":%u,\"level\":%d},"
+        "\"steam\":{\"fitted\":%s,\"t\":%.1f,\"sp\":%.1f,\"ok\":%s,\"fault\":%u,\"level\":%d},"
         "\"shot\":{\"ml\":%.1f,\"ms\":%lu},"
         "\"pump\":{\"cooling\":%s,\"ms\":%lu},"
         "\"fill\":{\"brew\":%s,\"steam\":%s},"
@@ -488,6 +491,7 @@ static esp_err_t telemetry_get(httpd_req_t *req)
         (double)t.brew_temp, (double)t.brew_setpoint,
         t.brew_sensor_ok ? "true" : "false",
         (unsigned)t.brew_temp_fault, (int)t.brew_level,
+        STEAM_ENABLED ? "true" : "false",
         (double)t.steam_temp, (double)t.steam_setpoint,
         t.steam_sensor_ok ? "true" : "false",
         (unsigned)t.steam_temp_fault, (int)t.steam_level,
@@ -551,6 +555,11 @@ static esp_err_t debug_pulse_post(httpd_req_t *req)
         httpd_resp_set_status(req, "400 Bad Request");
         httpd_resp_set_type(req, "application/json");
         return httpd_resp_sendstr(req, "{\"ok\":false,\"why\":\"unknown output\"}");
+    }
+    if (!STEAM_ENABLED && out == DEBUG_OUT_FILL_STEAM) {
+        httpd_resp_set_status(req, "409 Conflict");
+        httpd_resp_set_type(req, "application/json");
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"why\":\"steam boiler not fitted\"}");
     }
 
     char body[96];

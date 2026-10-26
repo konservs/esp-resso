@@ -1,5 +1,17 @@
 menu "ESP.Resso"
 
+    config ESPRESSO_STEAM_BOILER
+        bool "Steam boiler fitted"
+        default y
+        help
+            Build for a dual-boiler machine. Disable for a brew-boiler-only
+            build (or for bench work before the steam side is populated): the
+            steam RTD front-end is never initialised or read, the steam
+            heaters, auto-fill valve and level probe are never driven, the
+            steam knob is ignored, and the safety supervisor does not require
+            a steam temperature. READY then needs only the brew boiler at
+            setpoint.
+
     config ESPRESSO_WIFI_ENABLE
         bool "Enable Wi-Fi dashboard"
         default y

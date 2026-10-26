@@ -55,9 +55,16 @@ void safety_task(void *arg)
 
         in.sensors_valid = sampled;
         in.brew_temp = app->brew_temp.celsius;
-        in.steam_temp = app->steam_temp.celsius;
         in.brew_sensor_ok = app->brew_temp.ok && !stale;
+#if STEAM_ENABLED
+        in.steam_temp = app->steam_temp.celsius;
         in.steam_sensor_ok = app->steam_temp.ok && !stale;
+#else
+        /* Not fitted: nothing to supervise on that side. A constant 0 C can
+         * neither trip OVERTEMP nor count as heating progress. */
+        in.steam_temp = 0.0f;
+        in.steam_sensor_ok = true;
+#endif
         in.any_heater_on = (app->brew_duty > 0.0f) || (app->steam_duty > 0.0f);
         /* Fill runaway: the valve commands the control loop published this
          * cycle. Either one open means the machine is asking for water; the

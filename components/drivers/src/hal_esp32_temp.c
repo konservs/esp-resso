@@ -26,6 +26,8 @@ hal_temp_reading_t hal_temp_read(hal_boiler_id_t boiler)
 
 #else /* !TEMP_SIM — the real front-ends */
 
+#include "sdkconfig.h"
+
 #include "driver/gpio.h"
 #include "driver/spi_master.h"
 #include "esp_log.h"
@@ -51,7 +53,9 @@ hal_temp_reading_t hal_temp_read(hal_boiler_id_t boiler)
 #define RTD_SPI_HOST SPI2_HOST
 
 static max31865_t s_brew;
+#ifdef CONFIG_ESPRESSO_STEAM_BOILER
 static max31865_t s_steam;
+#endif
 
 /* Bench bring-up: while a probe reads as faulted, dump that front-end's
  * register map every few seconds so the fault can be told apart from a bad
@@ -93,17 +97,29 @@ espresso_result_t hal_temp_init(void)
                      RTD_WIRES) != ESP_OK) {
         return ESPRESSO_ERR_STATE;
     }
+#ifdef CONFIG_ESPRESSO_STEAM_BOILER
     if (max31865_add(&s_steam, RTD_SPI_HOST, PIN_RTD_STEAM_CS, RTD_RREF, RTD_PT100_R0,
                      RTD_WIRES) != ESP_OK) {
         return ESPRESSO_ERR_STATE;
     }
+#else
+    ESP_LOGI("temp", "steam boiler not fitted (CONFIG_ESPRESSO_STEAM_BOILER=n): "
+                     "steam RTD front-end not initialised");
+#endif
     return ESPRESSO_OK;
 }
 
 hal_temp_reading_t hal_temp_read(hal_boiler_id_t boiler)
 {
     hal_temp_reading_t r = { .celsius = 0.0f, .ok = false, .fault = 0 };
+#ifdef CONFIG_ESPRESSO_STEAM_BOILER
     max31865_t *dev = (boiler == HAL_BOILER_STEAM) ? &s_steam : &s_brew;
+#else
+    if (boiler == HAL_BOILER_STEAM) {
+        return r; /* not fitted: never on the bus, reported as "no reading" */
+    }
+    max31865_t *dev = &s_brew;
+#endif
     r.ok = max31865_read_celsius(dev, &r.celsius, &r.fault);
 
 #if TEMP_REG_DUMP

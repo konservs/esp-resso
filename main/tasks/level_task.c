@@ -120,19 +120,25 @@ void level_task(void *arg)
 #else
     /* Debounce the probes so the fill valves do not chatter, and hold both
      * probes at "no reading yet" until they have actually settled. */
-    probe_filter_t brew, steam;
+    probe_filter_t brew;
     probe_filter_init(&brew);
+#if STEAM_ENABLED
+    probe_filter_t steam;
     probe_filter_init(&steam);
+#endif
 
     TickType_t last = xTaskGetTickCount();
     for (;;) {
         vTaskDelayUntil(&last, pdMS_TO_TICKS(LEVEL_PERIOD_MS));
 
         const hal_level_state_t brew_raw = hal_level_read(HAL_LEVEL_BREW);
-        const hal_level_state_t steam_raw = hal_level_read(HAL_LEVEL_STEAM);
-
         atomic_store(&app->brew_probe_state, probe_update(&brew, brew_raw));
+#if STEAM_ENABLED
+        const hal_level_state_t steam_raw = hal_level_read(HAL_LEVEL_STEAM);
         atomic_store(&app->steam_probe_state, probe_update(&steam, steam_raw));
+#endif
+        /* Steam not fitted: its probe is never driven and stays at the seeded
+         * HAL_LEVEL_UNKNOWN, which the control loop treats as "no fill, no heat". */
         /* Stamp the publish time last: with seq-cst atomics, a reader that sees a
          * fresh timestamp is guaranteed to see the states from this iteration. */
         atomic_store(&app->level_update_ms, hal_time_ms());

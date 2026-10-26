@@ -225,8 +225,8 @@ void ui_task(void *arg)
         atomic_store(&app->switch_steam, ssw);
         if (bsw && !prev_brew_sw)  app_post_event(EV_BREW_LEVER_ON);
         if (!bsw && prev_brew_sw)  app_post_event(EV_BREW_LEVER_OFF);
-        if (ssw && !prev_steam_sw) app_post_event(EV_STEAM_ON);
-        if (!ssw && prev_steam_sw) app_post_event(EV_STEAM_OFF);
+        if (STEAM_ENABLED && ssw && !prev_steam_sw) app_post_event(EV_STEAM_ON);
+        if (STEAM_ENABLED && !ssw && prev_steam_sw) app_post_event(EV_STEAM_OFF);
         prev_brew_sw = bsw;
         prev_steam_sw = ssw;
 

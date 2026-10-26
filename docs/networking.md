@@ -36,7 +36,8 @@ into the setup portal.
 
 ## Enable & configure
 
-In `idf.py menuconfig` → **ESP.Resso**:
+In `idf.py menuconfig` → **ESP.Resso** (the same menu also holds **Steam
+boiler fitted**, `CONFIG_ESPRESSO_STEAM_BOILER` — see [hardware.md](hardware.md)):
 
 - **Enable Wi-Fi dashboard** (on by default)
 - **Wi-Fi SSID / password** — *optional*; leave blank to use the setup portal
